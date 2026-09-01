@@ -12,11 +12,11 @@ import re
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Dashboard Clima IIPAC", layout="wide")
 
-# --- LOGO DEL IIPAC (original) ---
+# --- LOGO IIPAC EN LA BARRA LATERAL ---
 try:
     st.sidebar.image("LogoIIPAC.jpg", use_container_width=True)
 except:
-    st.sidebar.warning("Logo no encontrado. Sube 'LogoIIPAC.jpg' al repositorio.")
+    st.sidebar.warning("Logo no encontrado. Asegúrate de subir 'LogoIIPAC.jpg'.")
 
 # --- TÍTULO PRINCIPAL ---
 st.title("📊 Dashboard Datos Clima IIPAC")
@@ -41,6 +41,32 @@ def buscar_columna(df, patrones):
             if patron_norm in col_norm or col_norm in patron_norm:
                 return col_real
     return None
+
+def extraer_direcciones(df_row):
+    """Extrae frecuencias y velocidades para las 8 direcciones desde una fila de viento."""
+    direcciones = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+    frecuencias = []
+    velocidades = []
+    
+    for dir in direcciones:
+        # Buscar columna de frecuencia y velocidad para esta dirección
+        freq_col = buscar_columna(df_row, [f'frecuencia {dir}', f'frec {dir}'])
+        vel_col = buscar_columna(df_row, [f'velocidad promedio {dir}', f'vel {dir}'])
+        
+        if freq_col and vel_col:
+            freq_val = df_row[freq_col].iloc[0] if freq_col in df_row else np.nan
+            vel_val = df_row[vel_col].iloc[0] if vel_col in df_row else np.nan
+            frecuencias.append(freq_val if pd.notna(freq_val) else 0)
+            velocidades.append(vel_val if pd.notna(vel_val) else 0)
+        else:
+            frecuencias.append(0)
+            velocidades.append(0)
+    
+    # Buscar CALMA
+    calma_col = buscar_columna(df_row, ['frecuencia calma', 'calma'])
+    calma_val = df_row[calma_col].iloc[0] if calma_col and calma_col in df_row else np.nan
+    
+    return direcciones, frecuencias, velocidades, calma_val
 
 # --- 1. CARGA DE DATOS ---
 @st.cache_data
@@ -90,18 +116,18 @@ def load_data():
     if len(meses_encontrados) < 12:
         st.warning(f"⚠️ Solo se encontraron {len(meses_encontrados)} meses. Se usarán los disponibles.")
     
-    # --- COLUMNAS DE VIENTO (búsqueda mejorada) ---
-    # Buscar cualquier columna que tenga 'frecuencia' O 'velocidad'
+    # --- COLUMNAS DE VIENTO (búsqueda mejorada con regex) ---
     wind_cols = []
     for col in df_raw.columns:
-        col_lower = col.lower()
-        if 'frecuencia' in col_lower or 'velocidad' in col_lower:
+        # Buscar columnas que contengan "Frecuencia" o "Velocidad promedio" (con o sin paréntesis)
+        if re.search(r'frecuencia|velocidad\s*promedio|calma', col, re.IGNORECASE):
             wind_cols.append(col)
     
-    # También buscar 'calma'
-    calma_col = buscar_columna(df_raw, ['calma'])
-    if calma_col and calma_col not in wind_cols:
-        wind_cols.append(calma_col)
+    # Si no se encontraron, intentar con búsqueda más flexible
+    if not wind_cols:
+        for col in df_raw.columns:
+            if 'frec' in col.lower() or 'veloc' in col.lower():
+                wind_cols.append(col)
     
     # --- ID_VARS ---
     id_vars = [col_names['provincia'], col_names['estacion'], col_names['latitud'], 
@@ -110,8 +136,13 @@ def load_data():
     
     # --- DATOS DE VIENTO (se mantienen en formato ancho) ---
     df_wind = df_raw[id_vars + wind_cols].copy()
+    # Reemplazar 'S/D', 'S/P' por NaN y convertir a numérico (maneja comas como decimal)
     for col in wind_cols:
-        df_wind[col] = pd.to_numeric(df_wind[col].replace(['S/D', 'S/P', ''], np.nan), errors='coerce')
+        df_wind[col] = df_wind[col].replace(['S/D', 'S/P', ''], np.nan)
+        # Si hay comas, convertirlas a puntos (ya que decimal=',' no siempre funciona)
+        if df_wind[col].dtype == 'object':
+            df_wind[col] = df_wind[col].str.replace(',', '.').astype(float, errors='ignore')
+        df_wind[col] = pd.to_numeric(df_wind[col], errors='coerce')
     
     # --- DATOS MENSUALES (formato largo) ---
     df_long = pd.melt(
@@ -121,7 +152,11 @@ def load_data():
         var_name='Mes',
         value_name='Valor'
     )
-    df_long['Valor'] = pd.to_numeric(df_long['Valor'].replace(['S/D', 'S/P', ''], np.nan), errors='coerce')
+    # Limpiar valores mensuales
+    df_long['Valor'] = df_long['Valor'].replace(['S/D', 'S/P', ''], np.nan)
+    if df_long['Valor'].dtype == 'object':
+        df_long['Valor'] = df_long['Valor'].str.replace(',', '.').astype(float, errors='ignore')
+    df_long['Valor'] = pd.to_numeric(df_long['Valor'], errors='coerce')
     
     mes_map = {m: i+1 for i, m in enumerate(meses)}
     df_long['Mes_num'] = df_long['Mes'].map(mes_map)
@@ -159,25 +194,14 @@ if df_valid.empty:
 
 # --- VARIABLE (excluyendo la de viento) ---
 variables_todas = sorted(df_valid[col_variable].unique())
-# Identificar variable de viento (contiene 'frecuencia' y 'velocidad')
+
+# Identificar la variable de viento (puede tener paréntesis y años diferentes)
 variable_viento = None
+pattern_viento = re.compile(r'frecuencia.*velocidad', re.IGNORECASE)
 for var in variables_todas:
-    if 'frecuencia' in var.lower() and 'velocidad' in var.lower():
+    if pattern_viento.search(var):
         variable_viento = var
         break
-
-# Si no se encuentra por nombre, buscar por columnas de viento
-if not variable_viento and wind_cols:
-    # Buscar en df_wind alguna fila que tenga columnas de viento
-    for est in estaciones:
-        df_temp = df_wind[df_wind[col_estacion] == est]
-        if not df_temp.empty:
-            for var in df_temp[col_variable].unique():
-                if any(col in wind_cols for col in df_temp.columns):
-                    variable_viento = var
-                    break
-        if variable_viento:
-            break
 
 variables = [v for v in variables_todas if v != variable_viento]
 if not variables:
@@ -189,27 +213,20 @@ variable_seleccionada = st.sidebar.selectbox("📊 Variable", variables)
 # --- ESTADÍSTICO ---
 df_var = df_valid[df_valid[col_variable] == variable_seleccionada]
 estadisticos = sorted(df_var[col_estadistico].unique())
-
-# Asegurar que 'Promedio' esté siempre en la lista (si existe en los datos)
-if 'Promedio' in estadisticos:
-    default_estadistico = 'Promedio'
-else:
-    default_estadistico = estadisticos[0] if estadisticos else None
-
-estadistico_seleccionado = st.sidebar.selectbox("📈 Estadístico", estadisticos, index=estadisticos.index(default_estadistico) if default_estadistico in estadisticos else 0)
+estadistico_seleccionado = st.sidebar.selectbox("📈 Estadístico", estadisticos)
 
 # --- SUPERPOSICIÓN (multiselect) ---
 superponer = st.sidebar.checkbox("🔄 Superponer estadísticos")
 estadisticos_a_superponer = []
 if superponer:
-    # Por defecto, seleccionar 'Promedio' si existe, y otro
-    default_selection = [est for est in ['Promedio', 'Máximo valor promedio', 'Mínimo valor promedio'] if est in estadisticos]
-    if not default_selection and len(estadisticos) >= 2:
-        default_selection = estadisticos[:2]
+    # Mostrar solo los que son relevantes (excluir "Número de años considerados" etc.)
+    opciones_superposicion = [e for e in estadisticos if 'años' not in e.lower() and 'diario' not in e.lower()]
+    if not opciones_superposicion:
+        opciones_superposicion = estadisticos
     estadisticos_a_superponer = st.sidebar.multiselect(
         "Selecciona los estadísticos a superponer (máximo 3)",
-        estadisticos,
-        default=default_selection[:3]
+        opciones_superposicion,
+        default=opciones_superposicion[:2] if len(opciones_superposicion) >= 2 else opciones_superposicion
     )
 
 # --- 3. DATOS DE UBICACIÓN ---
@@ -237,13 +254,14 @@ with col1:
             df_completo = pd.DataFrame({'Mes_num': range(1, 13)})
             df_completo['Mes'] = df_completo['Mes_num'].map({i+1: m for i, m in enumerate(meses)})
             df_completo = df_completo.merge(df_temp[['Mes_num', 'Valor']], on='Mes_num', how='left')
-            # Agregar línea
+            # Agregar línea (con connectgaps para unir puntos)
             fig.add_trace(go.Scatter(
                 x=df_completo['Mes'],
                 y=df_completo['Valor'],
                 mode='lines+markers',
                 name=est,
-                line=dict(width=2)
+                line=dict(width=2),
+                connectgaps=True  # <--- UNE LOS PUNTOS AUNQUE HAYA NaN
             ))
         fig.update_layout(
             title=f"{variable_seleccionada} - Comparativa de estadísticos",
@@ -270,6 +288,9 @@ with col1:
             labels={'Mes': 'Mes', 'Valor': 'Valor'},
             template='plotly_white',
         )
+        # Conectar puntos con línea
+        fig_line.update_traces(connectgaps=True)
+        
         if df_completo['Valor'].notna().sum() > 1:
             media = df_completo['Valor'].mean()
             fig_line.add_hline(
@@ -285,7 +306,7 @@ with col2:
     # --- MAPA CON NOMBRE DE ESTACIÓN ---
     st.subheader(f"📍 {estacion_seleccionada}")
     if lat and lon:
-        st.write(f"Altura: {altura} msnm")
+        st.write(f"Altura: {altura} msnm")  # <--- SOLO "msnm"
         st.write(f"Período: {periodo}")
         m = folium.Map(location=[float(lat), float(lon)], zoom_start=10)
         folium.Marker(
@@ -300,49 +321,57 @@ with col2:
 # --- 5. ROSA DE LOS VIENTOS ---
 st.subheader("🌬️ Rosa de los Vientos")
 
-# --- Selector de período para la rosa de vientos (dentro de la sección) ---
-periodos_viento = ['Anual'] + meses
-periodo_seleccionado = st.selectbox("Selecciona el período para la rosa de vientos", periodos_viento, key="periodo_viento")
-
-# Verificar si existe la variable de viento y hay datos
+# --- SELECTOR DE PERÍODO (en el área principal, no en la barra lateral) ---
 if variable_viento:
-    # Filtrar fila de viento para la estación y período seleccionado
-    if periodo_seleccionado == 'Anual':
-        df_viento_filtrado = df_wind[
-            (df_wind[col_estacion] == estacion_seleccionada) &
-            (df_wind[col_variable] == variable_viento) &
-            (df_wind[col_estadistico] == 'Anual')
-        ]
+    # Obtener todos los períodos disponibles para la variable de viento en esta estación
+    df_viento_estacion = df_wind[
+        (df_wind[col_estacion] == estacion_seleccionada) &
+        (df_wind[col_variable] == variable_viento)
+    ]
+    if not df_viento_estacion.empty:
+        periodos_disponibles = sorted(df_viento_estacion[col_estadistico].unique())
+        # Filtrar solo los que son meses o Anual
+        periodos_filtrados = []
+        for p in periodos_disponibles:
+            if p in meses or p == 'Anual':
+                periodos_filtrados.append(p)
+        # Si no hay "Anual", agregarlo si existe algún mes
+        if 'Anual' not in periodos_filtrados and any(p in meses for p in periodos_disponibles):
+            periodos_filtrados.append('Anual')
+        
+        if periodos_filtrados:
+            # Ordenar: primero meses en orden, luego Anual
+            orden = {m: i for i, m in enumerate(meses)}
+            orden['Anual'] = 12
+            periodos_filtrados.sort(key=lambda x: orden.get(x, 99))
+            
+            mes_viento_seleccionado = st.selectbox(
+                "Selecciona el período para la rosa de vientos",
+                periodos_filtrados,
+                key="mes_viento"
+            )
+        else:
+            st.info("ℹ️ No hay períodos disponibles para la rosa de vientos.")
+            mes_viento_seleccionado = None
     else:
-        df_viento_filtrado = df_wind[
-            (df_wind[col_estacion] == estacion_seleccionada) &
-            (df_wind[col_variable] == variable_viento) &
-            (df_wind[col_estadistico] == periodo_seleccionado)
-        ]
+        st.info(f"ℹ️ No hay datos de viento para la estación {estacion_seleccionada}.")
+        mes_viento_seleccionado = None
+else:
+    st.info("ℹ️ No se encontró la variable de viento en el archivo.")
+    mes_viento_seleccionado = None
+
+# --- GENERAR ROSA DE VIENTOS ---
+if variable_viento and mes_viento_seleccionado:
+    # Filtrar fila de viento para la estación, variable y período seleccionado
+    df_viento_filtrado = df_wind[
+        (df_wind[col_estacion] == estacion_seleccionada) &
+        (df_wind[col_variable] == variable_viento) &
+        (df_wind[col_estadistico] == mes_viento_seleccionado)
+    ]
     
     if not df_viento_filtrado.empty:
-        # Extraer direcciones y sus valores
-        direcciones = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-        frecuencias = []
-        velocidades = []
-        
-        for dir in direcciones:
-            # Buscar columnas de frecuencia y velocidad para esta dirección
-            freq_col = buscar_columna(df_viento_filtrado, [f'frecuencia {dir}', f'frec {dir}'])
-            vel_col = buscar_columna(df_viento_filtrado, [f'velocidad promedio {dir}', f'vel {dir}'])
-            
-            if freq_col and vel_col:
-                freq_val = df_viento_filtrado[freq_col].iloc[0]
-                vel_val = df_viento_filtrado[vel_col].iloc[0]
-                frecuencias.append(freq_val if pd.notna(freq_val) else 0)
-                velocidades.append(vel_val if pd.notna(vel_val) else 0)
-            else:
-                frecuencias.append(0)
-                velocidades.append(0)
-        
-        # Buscar CALMA
-        calma_col = buscar_columna(df_viento_filtrado, ['frecuencia calma', 'calma'])
-        calma_val = df_viento_filtrado[calma_col].iloc[0] if calma_col else np.nan
+        # Extraer direcciones usando la función auxiliar
+        direcciones, frecuencias, velocidades, calma_val = extraer_direcciones(df_viento_filtrado)
         
         if any(f > 0 for f in frecuencias):
             df_wind_plot = pd.DataFrame({
@@ -358,7 +387,7 @@ if variable_viento:
                 color='Velocidad (km/h)',
                 color_continuous_scale=px.colors.sequential.Plasma,
                 template='plotly_dark',
-                title=f"Rosa de Vientos - {estacion_seleccionada} ({periodo_seleccionado})",
+                title=f"Rosa de Vientos - {estacion_seleccionada} ({mes_viento_seleccionado})",
                 hover_data={'Velocidad (km/h)': True}
             )
             fig_wind.update_layout(
@@ -374,9 +403,10 @@ if variable_viento:
         else:
             st.info("ℹ️ No hay datos de viento válidos para este período.")
     else:
-        st.info(f"ℹ️ No se encontraron datos de viento para {estacion_seleccionada} - {periodo_seleccionado}.")
+        st.info(f"ℹ️ No se encontraron datos para {estacion_seleccionada} - {mes_viento_seleccionado}.")
 else:
-    st.info("ℹ️ No se detectó la variable de viento en el archivo. Verifica que existan columnas con 'Frecuencia' y 'Velocidad'.")
+    if not variable_viento:
+        st.info("ℹ️ La variable de viento no está disponible en esta base de datos.")
 
 # --- 6. OTROS DATOS ---
 st.subheader("📊 Otros Datos")
@@ -406,3 +436,13 @@ with st.expander("📋 Ver todos los datos de la variable seleccionada"):
         st.dataframe(df_completo)
     else:
         st.dataframe(df_final[['Mes', 'Valor']] if not df_final.empty else pd.DataFrame())
+
+# --- OPCIONAL: DEPURACIÓN (mostrar columnas detectadas) ---
+with st.expander("🔧 Información de depuración (solo para revisión)"):
+    st.write("**Columnas de viento detectadas:**", wind_cols)
+    if variable_viento:
+        st.write("**Variable de viento encontrada:**", variable_viento)
+        st.write("**Períodos disponibles para viento en esta estación:**", 
+                 sorted(df_wind_estacion[col_estadistico].unique()))
+    else:
+        st.write("**No se detectó variable de viento.**")
