@@ -108,7 +108,6 @@ def load_data():
     
     # --- CONVERTIR TODAS LAS COLUMNAS DE MESES Y VIENTO A NUMÉRICO ---
     # Identificar columnas de viento (todas las que no son id_vars y no son meses)
-    # Pero como algunos meses pueden estar también, mejor seleccionar todas las que no son id_vars
     columnas_a_convertir = [col for col in df_raw.columns if col not in id_vars]
     for col in columnas_a_convertir:
         df_raw[col] = df_raw[col].apply(convertir_decimal)
@@ -227,7 +226,7 @@ with col1:
             df_completo = pd.DataFrame({'Mes_num': range(1, 13)})
             df_completo['Mes'] = df_completo['Mes_num'].map({i+1: m for i, m in enumerate(meses)})
             df_completo = df_completo.merge(df_temp[['Mes_num', 'Valor']], on='Mes_num', how='left')
-            df_completo['Valor'] = df_completo['Valor'].apply(convertir_decimal)  # Asegurar
+            df_completo['Valor'] = df_completo['Valor'].apply(convertir_decimal)
             fig.add_trace(go.Scatter(
                 x=df_completo['Mes'],
                 y=df_completo['Valor'],
@@ -301,8 +300,6 @@ periodo_viento = st.selectbox(
 
 if not df_wind_estacion.empty and wind_cols:
     # Buscar la fila que contiene la variable de viento para esta estación
-    # (asumimos que la variable de viento se llama algo con "Frecuencia" y "velocidad")
-    # Filtramos por la variable de viento (si la encontramos)
     df_wind_variable = df_wind_estacion
     if variable_viento:
         df_wind_variable = df_wind_estacion[df_wind_estacion[col_variable] == variable_viento]
@@ -427,7 +424,7 @@ for est in estadisticos_puntuales:
     if not df_kpi.empty:
         valores = df_kpi['Valor'].dropna()
         if not valores.empty:
-            kpi_data[est] = valores.iloc[0]  # Tomar el primer valor (debe ser constante)
+            kpi_data[est] = valores.iloc[0]
 
 if kpi_data:
     cols = st.columns(len(kpi_data))
