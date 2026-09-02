@@ -41,14 +41,22 @@ def buscar_columna(df, patrones):
     return None
 
 def convertir_numerico(series):
-    """Convierte una serie a numérico, manejando comas como decimales."""
-    if series.dtype == 'object':
-        # Reemplazar comas por puntos y eliminar caracteres no numéricos
-        series = series.astype(str).str.replace(',', '.', regex=False)
-        series = series.str.replace('S/D', '', regex=False).str.replace('S/P', '', regex=False)
-        series = series.str.strip()
-        series = series.replace('', np.nan)
-    return pd.to_numeric(series, errors='coerce')
+    """Convierte una serie a numérico, manejando comas como decimales y múltiples dtypes."""
+    if series is None:
+        return series
+    
+    # Si la serie ya es puramente numérica, convertir directamente
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors='coerce')
+    
+    # Convertir a texto para reemplazar comas, espacios y valores sin dato del SMN
+    s_str = series.astype(str).str.strip()
+    s_str = s_str.str.replace(',', '.', regex=False)
+    s_str = s_str.str.replace('S/D', '', regex=False).str.replace('S/P', '', regex=False)
+    s_str = s_str.str.strip()
+    s_str = s_str.replace(['', 'nan', 'None', 'NaN', 'null'], np.nan)
+    
+    return pd.to_numeric(s_str, errors='coerce')
 
 def convertir_todas_numericas(df, columnas):
     """Aplica convertir_numerico a una lista de columnas."""
@@ -127,7 +135,7 @@ def load_data():
     # --- DATOS DE VIENTO ---
     wind_cols = [col for col in df_viento_raw.columns if col not in id_vars]
     df_wind = df_viento_raw[id_vars + wind_cols].copy()
-    df_wind = convertir_todas_numericas(df_wind, wind_cols)  # Reforzar conversión
+    df_wind = convertir_todas_numericas(df_wind, wind_cols)
     for col in ['estacion', 'variable', 'estadistico']:
         nombre_real = col_names[col]
         df_wind[nombre_real] = df_wind[nombre_real].str.strip()
@@ -140,7 +148,6 @@ def load_data():
         var_name='Mes',
         value_name='Valor'
     )
-    # <--- CAMBIO CLAVE: usar convertir_numerico en lugar de pd.to_numeric
     df_long['Valor'] = convertir_numerico(df_long['Valor'])
     
     mes_map = {m: i+1 for i, m in enumerate(meses)}
@@ -191,7 +198,6 @@ variable_seleccionada = st.sidebar.selectbox("📊 Variable", variables)
 df_var = df_valid[df_valid[col_variable] == variable_seleccionada]
 todos_los_estadisticos = sorted(df_var[col_estadistico].unique())
 
-# EXCLUIR "Número de años considerados" de TODOS los lugares
 ESTADISTICO_A_EXCLUIR = "Número de años considerados"
 estadisticos = [e for e in todos_los_estadisticos if e != ESTADISTICO_A_EXCLUIR]
 
@@ -233,11 +239,13 @@ with col1:
         fig = go.Figure()
         for est in estadisticos_a_superponer:
             df_temp = df_var[df_var[col_estadistico] == est].sort_values('Mes_num')
+            df_temp = df_temp.groupby('Mes_num', as_index=False)['Valor'].mean()
+            
             df_completo = pd.DataFrame({'Mes_num': range(1, 13)})
             df_completo['Mes'] = df_completo['Mes_num'].map({i+1: m for i, m in enumerate(meses)})
             df_completo = df_completo.merge(df_temp[['Mes_num', 'Valor']], on='Mes_num', how='left')
-            # Forzar conversión
             df_completo['Valor'] = convertir_numerico(df_completo['Valor'])
+            
             fig.add_trace(go.Scatter(
                 x=df_completo['Mes'],
                 y=df_completo['Valor'],
@@ -257,10 +265,11 @@ with col1:
     
     else:
         df_final = df_var[df_var[col_estadistico] == estadistico_seleccionado].sort_values('Mes_num')
+        df_final = df_final.groupby('Mes_num', as_index=False)['Valor'].mean()
+        
         df_completo = pd.DataFrame({'Mes_num': range(1, 13)})
         df_completo['Mes'] = df_completo['Mes_num'].map({i+1: m for i, m in enumerate(meses)})
         df_completo = df_completo.merge(df_final[['Mes_num', 'Valor']], on='Mes_num', how='left')
-        # Forzar conversión
         df_completo['Valor'] = convertir_numerico(df_completo['Valor'])
         
         fig_line = px.line(
@@ -393,13 +402,10 @@ with col_wind:
 with col_otros:
     st.subheader("📊 Otros Datos")
     
-    # Estadísticos puntuales (excluyendo los que son promedios mensuales y el excluido)
     estadisticos_puntuales = []
     for est in estadisticos:
-        # Excluir "Número de años considerados" (ya está excluido de la lista principal)
         if est == ESTADISTICO_A_EXCLUIR:
             continue
-        # Excluir los que claramente son promedios mensuales
         if 'promedio' in est.lower() and 'máximo' not in est.lower() and 'mínimo' not in est.lower():
             continue
         if est in ['Promedio', 'Máximo valor promedio', 'Mínimo valor promedio']:
@@ -420,7 +426,7 @@ with col_otros:
                 display = nombre.replace('valor', '').strip()
                 if display == '':
                     display = nombre
-                st.metric(label=display, value=f"{valor:.2f}" if isinstance(valor, (int, float)) else str(valor))
+                st.metric(label=display, value=f"{valor:.2f}" if isinstance(valor, (int, float, np.floating, np.integer)) else str(valor))
     else:
         st.info("No hay datos puntuales adicionales para esta variable.")
 
