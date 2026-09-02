@@ -43,26 +43,24 @@ def buscar_columna(df, patrones):
     return None
 
 def convertir_numerico(series):
-    """
-    Convierte una serie a numérico, manejando comas como decimales.
-    Elimina 'S/D', 'S/P', espacios y convierte correctamente.
-    """
+    """Convierte una serie a numérico, manejando comas como decimales de forma robusta."""
     if series.dtype == 'object':
-        # Asegurar que sea string
+        # Convertir a string
         series = series.astype(str)
-        # Reemplazar comas por puntos (decimales)
+        # Reemplazar comas por puntos (coma decimal)
         series = series.str.replace(',', '.', regex=False)
-        # Eliminar 'S/D', 'S/P' y espacios en blanco
-        series = series.str.replace('S/D', '', regex=False)
-        series = series.str.replace('S/P', '', regex=False)
+        # Eliminar espacios extras
         series = series.str.strip()
-        # Reemplazar cadenas vacías con NaN
-        series = series.replace('', np.nan)
-        # Convertir a numérico
-        return pd.to_numeric(series, errors='coerce')
-    else:
-        # Si ya es numérico, asegurar que no tenga errores
-        return pd.to_numeric(series, errors='coerce')
+        # Reemplazar cadenas vacías, 'S/D', 'S/P' con NaN
+        series = series.replace(['', 'S/D', 'S/P'], np.nan)
+    # Convertir a numérico forzando errores a NaN
+    return pd.to_numeric(series, errors='coerce')
+
+def limpiar_dataframe(df, columnas):
+    """Aplica convertir_numerico a una lista de columnas."""
+    for col in columnas:
+        df[col] = convertir_numerico(df[col])
+    return df
 
 # --- 1. CARGA DE DATOS ---
 @st.cache_data
@@ -139,8 +137,7 @@ def load_data():
     df_wind = df_viento_raw[id_vars + wind_cols].copy()
     
     # Convertir todas las columnas de viento a numérico
-    for col in wind_cols:
-        df_wind[col] = convertir_numerico(df_wind[col])
+    df_wind = limpiar_dataframe(df_wind, wind_cols)
     
     # Limpiar nombres de estación, variable, estadístico
     for col in ['estacion', 'variable', 'estadistico']:
@@ -155,6 +152,7 @@ def load_data():
         var_name='Mes',
         value_name='Valor'
     )
+    # Convertir la columna Valor a numérico
     df_long['Valor'] = convertir_numerico(df_long['Valor'])
     
     mes_map = {m: i+1 for i, m in enumerate(meses)}
@@ -244,6 +242,7 @@ with col1:
             df_completo = pd.DataFrame({'Mes_num': range(1, 13)})
             df_completo['Mes'] = df_completo['Mes_num'].map({i+1: m for i, m in enumerate(meses)})
             df_completo = df_completo.merge(df_temp[['Mes_num', 'Valor']], on='Mes_num', how='left')
+            # FORZAR CONVERSIÓN A NUMÉRICO
             df_completo['Valor'] = pd.to_numeric(df_completo['Valor'], errors='coerce')
             fig.add_trace(go.Scatter(
                 x=df_completo['Mes'],
@@ -267,6 +266,7 @@ with col1:
         df_completo = pd.DataFrame({'Mes_num': range(1, 13)})
         df_completo['Mes'] = df_completo['Mes_num'].map({i+1: m for i, m in enumerate(meses)})
         df_completo = df_completo.merge(df_final[['Mes_num', 'Valor']], on='Mes_num', how='left')
+        # FORZAR CONVERSIÓN A NUMÉRICO
         df_completo['Valor'] = pd.to_numeric(df_completo['Valor'], errors='coerce')
         
         fig_line = px.line(
@@ -386,7 +386,7 @@ with col_wind:
                 theta='Dirección',
                 color='Velocidad (km/h)',
                 color_continuous_scale=px.colors.sequential.Plasma,
-                template='plotly_white',  # <--- FONDO CLARO
+                template='plotly_white',  # <--- FONDO MÁS CLARO
                 title=f"Rosa de Vientos - {estacion_seleccionada} ({periodo_viento})",
                 hover_data={'Velocidad (km/h)': True},
                 barmode='relative'
@@ -398,7 +398,9 @@ with col_wind:
                 ),
                 height=500,
                 width=500,
-                margin=dict(l=80, r=80, t=80, b=80)
+                margin=dict(l=80, r=80, t=80, b=80),
+                paper_bgcolor='white',
+                plot_bgcolor='white'
             )
             st.plotly_chart(fig_wind, use_container_width=True)
             
