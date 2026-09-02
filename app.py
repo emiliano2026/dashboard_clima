@@ -606,3 +606,7 @@ def generar_grafico_givoni(df):
   )
 
   return fig
+
+st.subheader("Carta Bioclimática de Givoni")
+fig_givoni = generar_grafico_givoni(df_filtrado)
+st.plotly_chart(fig_givoni, use_container_width=True)
