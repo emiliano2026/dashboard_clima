@@ -9,16 +9,14 @@ import os
 import numpy as np
 import re
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Dashboard Clima IIPAC", layout="wide")
 
-# --- LOGO IIPAC EN LA BARRA LATERAL ---
 try:
     st.sidebar.image("LogoIIPAC.jpg", use_container_width=True)
 except:
-    st.sidebar.warning("Logo no encontrado. Asegúrate de subir 'LogoIIPAC.jpg'.")
+    st.sidebar.warning("Logo no encontrado. Sube 'LogoIIPAC.jpg'.")
 
-# --- TÍTULO PRINCIPAL ---
 st.title("📊 Dashboard Datos Clima IIPAC")
 st.caption("Fuente: Servicio Meteorológico Nacional (SMN), serie 1991-2020.")
 
@@ -43,9 +41,7 @@ def buscar_columna(df, patrones):
     return None
 
 def convertir_numerico(series):
-    """Convierte una serie a numérico, manejando comas como decimales y valores no válidos."""
     if series.dtype == 'object':
-        # Reemplazar comas por puntos y eliminar caracteres no numéricos
         series = series.astype(str).str.replace(',', '.', regex=False)
         series = series.str.replace('S/D', '', regex=False).str.replace('S/P', '', regex=False)
         series = series.str.strip()
@@ -53,7 +49,6 @@ def convertir_numerico(series):
     return pd.to_numeric(series, errors='coerce')
 
 def convertir_todas_numericas(df, columnas):
-    """Aplica convertir_numerico a una lista de columnas."""
     for col in columnas:
         if col in df.columns:
             df[col] = convertir_numerico(df[col])
@@ -70,17 +65,14 @@ def load_data():
         with st.spinner("Descargando datos desde Google Drive..."):
             gdown.download(url, output, quiet=False)
     
-    # Detectar separador
     with open(output, 'r', encoding='utf-8') as f:
         first_line = f.readline()
         sep = '|' if '|' in first_line else (';' if ';' in first_line else ',')
     
-    # Leer CSV como texto para manejar decimales
     df_raw = pd.read_csv(output, delimiter=sep, skipinitialspace=True, 
                          encoding='utf-8', dtype=str, keep_default_na=False)
     df_raw.columns = df_raw.columns.str.strip()
     
-    # --- MAPEO DE COLUMNAS CLAVE ---
     mapeo = {
         'provincia': ['provincia'],
         'estacion': ['estación', 'estacion'],
@@ -101,25 +93,19 @@ def load_data():
             st.error(f"❌ No se encontró la columna para '{key}'. Columnas disponibles: {list(df_raw.columns)}")
             st.stop()
     
-    # --- MESES Y PERÍODOS ---
     meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
     meses_encontrados = [m for m in meses if m in df_raw.columns]
-    # Agregar 'Anual' si no existe, crearlo con NaN
     if 'Anual' not in df_raw.columns:
         df_raw['Anual'] = ''
     periodos = meses_encontrados + ['Anual']
     
-    # --- ID_VARS ---
     id_vars = [col_names['provincia'], col_names['estacion'], col_names['latitud'], 
                col_names['longitud'], col_names['altura'], col_names['periodo'],
                col_names['variable'], col_names['estadistico']]
     
-    # --- CONVERTIR TODAS LAS COLUMNAS DE MESES Y ANUAL A NUMÉRICO ---
-    # Antes de separar, convertimos todas las columnas que son meses o 'Anual'
     columnas_a_convertir = [col for col in df_raw.columns if col in meses or col == 'Anual']
     df_raw = convertir_todas_numericas(df_raw, columnas_a_convertir)
     
-    # --- DETECTAR VARIABLE DE VIENTO ---
     pattern_viento = re.compile(r'frecuencia.*velocidad', re.IGNORECASE)
     mask_viento = df_raw[col_names['variable']].str.contains(pattern_viento, na=False)
     if not mask_viento.any():
@@ -129,17 +115,13 @@ def load_data():
     df_viento_raw = df_raw[mask_viento].copy()
     df_no_viento = df_raw[~mask_viento].copy()
     
-    # --- DATOS DE VIENTO ---
     wind_cols = [col for col in df_viento_raw.columns if col not in id_vars]
     df_wind = df_viento_raw[id_vars + wind_cols].copy()
-    # Ya están convertidas, pero por si acaso
     df_wind = convertir_todas_numericas(df_wind, wind_cols)
-    
     for col in ['estacion', 'variable', 'estadistico']:
         nombre_real = col_names[col]
         df_wind[nombre_real] = df_wind[nombre_real].str.strip()
     
-    # --- DATOS MENSUALES (formato largo) ---
     df_long = pd.melt(
         df_no_viento,
         id_vars=id_vars,
@@ -147,7 +129,6 @@ def load_data():
         var_name='Mes',
         value_name='Valor'
     )
-    # El valor ya es numérico porque lo convertimos antes, pero reforzamos
     df_long['Valor'] = pd.to_numeric(df_long['Valor'], errors='coerce')
     
     mes_map = {m: i+1 for i, m in enumerate(meses)}
@@ -188,25 +169,27 @@ if df_valid.empty:
 variables_todas = sorted(df_valid[col_variable].unique())
 variables = [v for v in variables_todas if v != variable_viento]
 if not variables:
-    st.warning("No hay variables disponibles (todas son de viento).")
+    st.warning("No hay variables disponibles.")
     st.stop()
 
 variable_seleccionada = st.sidebar.selectbox("📊 Variable", variables)
 
+# --- TODOS los estadísticos de la variable seleccionada ---
 df_var = df_valid[df_valid[col_variable] == variable_seleccionada]
 estadisticos = sorted(df_var[col_estadistico].unique())
 estadistico_seleccionado = st.sidebar.selectbox("📈 Estadístico", estadisticos)
 
+# --- SUPERPOSICIÓN: permite elegir CUALQUIER estadístico ---
 superponer = st.sidebar.checkbox("🔄 Superponer estadísticos")
 estadisticos_a_superponer = []
 if superponer:
     estadisticos_a_superponer = st.sidebar.multiselect(
         "Selecciona los estadísticos a superponer (máximo 3)",
-        estadisticos,
+        estadisticos,  # <--- LISTA COMPLETA SIN FILTRAR
         default=estadisticos[:2] if len(estadisticos) >= 2 else estadisticos
     )
 
-# --- 3. DATOS DE UBICACIÓN ---
+# --- 3. UBICACIÓN ---
 df_ubicacion = df_long[df_long[col_estacion] == estacion_seleccionada]
 if not df_ubicacion.empty:
     lat = df_ubicacion[col_names['latitud']].iloc[0]
@@ -299,14 +282,12 @@ st.subheader("🌬️ Rosa de los Vientos")
 
 if variable_viento and not df_wind.empty:
     df_wind_estacion = df_wind[df_wind[col_estacion] == estacion_seleccionada]
-    
     if not df_wind_estacion.empty:
         periodos_disponibles = [p for p in periodos if p in df_wind_estacion.columns]
         if periodos_disponibles:
             orden = {m: i for i, m in enumerate(meses)}
             orden['Anual'] = 12
             periodos_disponibles.sort(key=lambda x: orden.get(x, 99))
-            
             periodo_viento = st.selectbox(
                 "Selecciona el período para la rosa de vientos",
                 periodos_disponibles,
@@ -358,7 +339,7 @@ with col_wind:
                 theta='Dirección',
                 color='Velocidad (km/h)',
                 color_continuous_scale=px.colors.sequential.Plasma,
-                template='plotly_white',  # Fondo más claro
+                template='plotly_white',
                 title=f"Rosa de Vientos - {estacion_seleccionada} ({periodo_viento})",
                 hover_data={'Velocidad (km/h)': True},
                 barmode='relative'
@@ -384,32 +365,33 @@ with col_wind:
         elif not periodo_viento:
             st.info("ℹ️ Selecciona un período para ver la rosa de vientos.")
 
-# --- 6. OTROS DATOS (estadísticos puntuales) ---
+# --- 6. OTROS DATOS (solo estadísticos puntuales) ---
 with col_otros:
     st.subheader("📊 Otros Datos")
     
     # Identificar estadísticos que NO son promedios mensuales
-    # Excluir los que tienen 'Promedio', 'Máximo valor promedio', 'Mínimo valor promedio'
-    # y también los que claramente son mensuales
-    excluir = ['Promedio', 'Máximo valor promedio', 'Mínimo valor promedio']
-    estadisticos_puntuales = [e for e in estadisticos if e not in excluir]
+    # (esto es solo para mostrar en "Otros Datos", no afecta la superposición)
+    estadisticos_puntuales = []
+    for est in estadisticos:
+        # Excluir los que claramente son promedios mensuales
+        if 'promedio' in est.lower() and 'máximo' not in est.lower() and 'mínimo' not in est.lower():
+            continue
+        if est in ['Promedio', 'Máximo valor promedio', 'Mínimo valor promedio']:
+            continue
+        estadisticos_puntuales.append(est)
     
-    # También filtrar los que tienen valores numéricos (no fechas, etc.)
     kpi_data = {}
     for est in estadisticos_puntuales:
         df_kpi = df_var[df_var[col_estadistico] == est]
         if not df_kpi.empty:
-            # Tomar el primer valor no nulo (si es puntual, debería ser constante)
             valores = df_kpi['Valor'].dropna()
             if not valores.empty:
-                # Si hay varios (puede ser que el estadístico aparezca en varias filas), tomamos el primero
+                # Tomar el primer valor (debería ser constante)
                 kpi_data[est] = valores.iloc[0]
     
     if kpi_data:
         for nombre, valor in kpi_data.items():
-            # Mostrar solo si el valor es numérico y no es NaN
             if pd.notna(valor):
-                # Limpiar nombre para display
                 display = nombre.replace('valor', '').strip()
                 if display == '':
                     display = nombre
