@@ -436,3 +436,173 @@ with st.expander("📋 Ver todos los datos de la variable seleccionada"):
         st.dataframe(df_completo)
     else:
         st.dataframe(df_final[['Mes', 'Valor']] if not df_final.empty else pd.DataFrame())
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+
+def generar_grafico_givoni(df):
+  """Genera el Diagrama Bioclimático de Givoni con Plotly.
+
+  df debe contener: 'temperatura', 'humedad_relativa', y 'fecha' (datetime)
+  """
+  fig = go.Figure()
+
+  # -------------------------------------------------------------------
+  # 1. DELIMITACIÓN DE ZONAS BIOCLIMÁTICAS DE GIVONI (Superficies)
+  # -------------------------------------------------------------------
+
+  # Zona 1: Confort Directo
+  fig.add_trace(
+      go.Scatter(
+          x=[20, 26, 26, 20, 20],
+          y=[20, 20, 80, 80, 20],
+          fill="toself",
+          fillcolor="rgba(46, 204, 113, 0.35)",
+          line=dict(color="#2ecc71", width=1.5),
+          name="1. Confort Térmico",
+          hoverinfo="name",
+      )
+  )
+
+  # Zona 2: Ventilación Natural
+  fig.add_trace(
+      go.Scatter(
+          x=[20, 32, 32, 26, 20],
+          y=[20, 20, 85, 85, 20],
+          fill="toself",
+          fillcolor="rgba(52, 152, 219, 0.25)",
+          line=dict(color="#3498db", width=1.5, dash="dot"),
+          name="2. Ventilación Natural",
+          hoverinfo="name",
+      )
+  )
+
+  # Zona 3: Masa Térmica (Alta inercia)
+  fig.add_trace(
+      go.Scatter(
+          x=[20, 35, 35, 20, 20],
+          y=[20, 20, 50, 50, 20],
+          fill="toself",
+          fillcolor="rgba(230, 126, 34, 0.2)",
+          line=dict(color="#e67e22", width=1.5, dash="dot"),
+          name="3. Masa Térmica",
+          hoverinfo="name",
+      )
+  )
+
+  # Zona 4: Enfriamiento Evaporativo
+  fig.add_trace(
+      go.Scatter(
+          x=[20, 40, 40, 20, 20],
+          y=[10, 10, 45, 45, 10],
+          fill="toself",
+          fillcolor="rgba(155, 89, 182, 0.2)",
+          line=dict(color="#9b59b6", width=1.5, dash="dot"),
+          name="4. Enfriamiento Evaporativo",
+          hoverinfo="name",
+      )
+  )
+
+  # Zona 5: Calefacción Solar Pasiva
+  fig.add_trace(
+      go.Scatter(
+          x=[10, 20, 20, 10, 10],
+          y=[20, 20, 80, 80, 20],
+          fill="toself",
+          fillcolor="rgba(241, 196, 15, 0.25)",
+          line=dict(color="#f1c40f", width=1.5, dash="dot"),
+          name="5. Calefacción Solar Pasiva",
+          hoverinfo="name",
+      )
+  )
+
+  # -------------------------------------------------------------------
+  # 2. CÁLCULO Y TRAZADO DE VECTORES MENSUALES (Variabilidad de datos)
+  # -------------------------------------------------------------------
+  df_temp = df.copy()
+  df_temp["mes"] = df_temp["fecha"].dt.month
+  df_temp["nombre_mes"] = df_temp["fecha"].dt.strftime("%B")
+
+  # Agrupar por mes calculando promedios de Max y Min
+  resumen_mensual = (
+      df_temp.groupby(["mes", "nombre_mes"])
+      .agg(
+          t_max=("temperatura", "mean"),  # o 'max' para absolutos
+          t_min=("temperatura", "mean"),  # o 'min' para absolutos
+          hr_max=("humedad_relativa", "max"),
+          hr_min=("humedad_relativa", "min"),
+      )
+      .reset_index()
+  )
+
+  # Simplificación de oscilación térmica diaria promedio por mes
+  resumen_mensual["t_max_prom"] = df_temp.groupby("mes")["temperatura"].transform(
+      lambda x: x[x > x.median()].mean()
+  )
+  resumen_mensual["t_min_prom"] = df_temp.groupby("mes")["temperatura"].transform(
+      lambda x: x[x <= x.median()].mean()
+  )
+
+  # Trazar vectores por cada mes
+  colores_meses = [
+      "#1f77b4",
+      "#aec7e8",
+      "#2ca02c",
+      "#98df8a",
+      "#d62728",
+      "#ff9896",
+      "#9467bd",
+      "#c5b0d5",
+      "#8c564b",
+      "#c49c94",
+      "#e377c2",
+      "#f7b6d2",
+  ]
+
+  for idx, row in resumen_mensual.iterrows():
+    # Coordenadas Vector: (T_min, HR_max) -> (T_max, HR_min)
+    x_vals = [row["t_min_prom"], row["t_max_prom"]]
+    y_vals = [row["hr_max"], row["hr_min"]]
+
+    fig.add_trace(
+        go.Scatter(
+            x=x_vals,
+            y=y_vals,
+            mode="lines+markers",
+            name=f"{row['nombre_mes'].capitalize()}",
+            line=dict(width=2.5, color=colores_meses[idx % len(colores_meses)]),
+            marker=dict(size=7),
+            text=[
+                f"Noche ({row['nombre_mes']}): {x_vals[0]:.1f}°C, {y_vals[0]:.1f}% HR",
+                f"Día ({row['nombre_mes']}): {x_vals[1]:.1f}°C, {y_vals[1]:.1f}% HR",
+            ],
+            hoverinfo="text",
+        )
+    )
+
+  # -------------------------------------------------------------------
+  # 3. CONFIGURACIÓN DE EJES Y ESTILO
+  # -------------------------------------------------------------------
+  fig.update_layout(
+      title="Diagrama Bioclimático de Givoni - Vectores de Variación Mensual",
+      xaxis=dict(
+          title="Temperatura Seca del Aire (°C)",
+          range=[0, 45],
+          dtick=5,
+          gridcolor="#e0e0e0",
+      ),
+      yaxis=dict(
+          title="Humedad Relativa (%)",
+          range=[0, 100],
+          dtick=10,
+          gridcolor="#e0e0e0",
+      ),
+      template="plotly_white",
+      height=650,
+      legend=dict(orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5),
+  )
+
+  return fig
