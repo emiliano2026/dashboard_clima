@@ -437,159 +437,178 @@ with st.expander("📋 Ver todos los datos de la variable seleccionada"):
     else:
         st.dataframe(df_final[['Mes', 'Valor']] if not df_final.empty else pd.DataFrame())
 
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
-import streamlit as st
 
+def generar_grafico_givoni_smn(df_estacion, col_names, meses):
+  """Genera el Diagrama Bioclimático de Givoni extrayendo las series de
 
-def generar_grafico_givoni(df):
-  """Genera el Diagrama Bioclimático de Givoni con Plotly.
-
-  df debe contener: 'temperatura', 'humedad_relativa', y 'fecha' (datetime)
+  Temperatura y Humedad Relativa directamente de df_estacion.
   """
+  col_var = col_names['variable']
+  col_est = col_names['estadistico']
+
+  # Filtrar registros de Temperatura y Humedad en la estación seleccionada
+  df_temp = df_estacion[
+      df_estacion[col_var].str.contains('temperatura', case=False, na=False)
+  ]
+  df_hr = df_estacion[
+      df_estacion[col_var].str.contains('humedad', case=False, na=False)
+  ]
+
+  if df_temp.empty or df_hr.empty:
+    return (
+        None,
+        'No hay datos suficientes de Temperatura y Humedad Relativa para esta'
+        ' estación.',
+    )
+
+  # Buscar estadísticos extremos (Máxima y Mínima media)
+  t_max_df = df_temp[
+      df_temp[col_est].str.contains('m[áa]xim', case=False, na=False)
+  ]
+  t_min_df = df_temp[
+      df_temp[col_est].str.contains('m[íi]nim', case=False, na=False)
+  ]
+
+  if t_max_df.empty:
+    t_max_df = df_temp
+  if t_min_df.empty:
+    t_min_df = df_temp
+
+  hr_max_df = df_hr[
+      df_hr[col_est].str.contains('m[áa]xim|09|08', case=False, na=False)
+  ]
+  hr_min_df = df_hr[
+      df_hr[col_est].str.contains('m[íi]nim|14|15', case=False, na=False)
+  ]
+
+  if hr_max_df.empty:
+    hr_max_df = df_hr
+  if hr_min_df.empty:
+    hr_min_df = df_hr
+
+  # Construir vectores mensuales (T_min, HR_max) -> (T_max, HR_min)
+  resumen = []
+  for i, mes in enumerate(meses):
+    mes_num = i + 1
+
+    t_max_val = t_max_df[t_max_df['Mes_num'] mes_num]['Valor'].mean()
+    t_min_val = t_min_df[t_min_df['Mes_num'] == mes_num]['Valor'].mean()
+    hr_max_val = hr_max_df[hr_max_df['Mes_num'] == mes_num]['Valor'].mean()
+    hr_min_val = hr_min_df[hr_min_df['Mes_num'] == mes_num]['Valor'].mean()
+
+    if pd.isna(t_max_val) or pd.isna(t_min_val):
+      continue
+
+    # Asignar valores por defecto razonables si falta un estadístico de HR
+    if pd.isna(hr_max_val):
+      hr_max_val = 80.0
+    if pd.isna(hr_min_val):
+      hr_min_val = 40.0
+
+    if hr_min_val > hr_max_val:
+      hr_max_val, hr_min_val = hr_min_val, hr_max_val
+
+    resumen.append({
+        'Mes': mes,
+        'T_min': min(t_min_val, t_max_val),
+        'T_max': max(t_min_val, t_max_val),
+        'HR_max': hr_max_val,
+        'HR_min': hr_min_val,
+    })
+
+  if not resumen:
+    return None, 'No se pudieron extraer pares de Temperatura/Humedad válidos.'
+
+  df_resumen = pd.DataFrame(resumen)
+
   fig = go.Figure()
 
-  # -------------------------------------------------------------------
-  # 1. DELIMITACIÓN DE ZONAS BIOCLIMÁTICAS DE GIVONI (Superficies)
-  # -------------------------------------------------------------------
-
-  # Zona 1: Confort Directo
+  # Zonas de Givoni
   fig.add_trace(
       go.Scatter(
           x=[20, 26, 26, 20, 20],
           y=[20, 20, 80, 80, 20],
-          fill="toself",
-          fillcolor="rgba(46, 204, 113, 0.35)",
-          line=dict(color="#2ecc71", width=1.5),
-          name="1. Confort Térmico",
-          hoverinfo="name",
+          fill='toself',
+          fillcolor='rgba(46, 204, 113, 0.3)',
+          line=dict(color='#2ecc71', width=1.5),
+          name='1. Confort Térmico',
+          hoverinfo='name',
       )
   )
-
-  # Zona 2: Ventilación Natural
   fig.add_trace(
       go.Scatter(
           x=[20, 32, 32, 26, 20],
           y=[20, 20, 85, 85, 20],
-          fill="toself",
-          fillcolor="rgba(52, 152, 219, 0.25)",
-          line=dict(color="#3498db", width=1.5, dash="dot"),
-          name="2. Ventilación Natural",
-          hoverinfo="name",
+          fill='toself',
+          fillcolor='rgba(52, 152, 219, 0.2)',
+          line=dict(color='#3498db', width=1.5, dash='dot'),
+          name='2. Ventilación Natural',
+          hoverinfo='name',
       )
   )
-
-  # Zona 3: Masa Térmica (Alta inercia)
   fig.add_trace(
       go.Scatter(
           x=[20, 35, 35, 20, 20],
           y=[20, 20, 50, 50, 20],
-          fill="toself",
-          fillcolor="rgba(230, 126, 34, 0.2)",
-          line=dict(color="#e67e22", width=1.5, dash="dot"),
-          name="3. Masa Térmica",
-          hoverinfo="name",
+          fill='toself',
+          fillcolor='rgba(230, 126, 34, 0.2)',
+          line=dict(color='#e67e22', width=1.5, dash='dot'),
+          name='3. Masa Térmica',
+          hoverinfo='name',
       )
   )
-
-  # Zona 4: Enfriamiento Evaporativo
   fig.add_trace(
       go.Scatter(
           x=[20, 40, 40, 20, 20],
           y=[10, 10, 45, 45, 10],
-          fill="toself",
-          fillcolor="rgba(155, 89, 182, 0.2)",
-          line=dict(color="#9b59b6", width=1.5, dash="dot"),
-          name="4. Enfriamiento Evaporativo",
-          hoverinfo="name",
+          fill='toself',
+          fillcolor='rgba(155, 89, 182, 0.2)',
+          line=dict(color='#9b59b6', width=1.5, dash='dot'),
+          name='4. Enfriamiento Evaporativo',
+          hoverinfo='name',
       )
   )
-
-  # Zona 5: Calefacción Solar Pasiva
   fig.add_trace(
       go.Scatter(
           x=[10, 20, 20, 10, 10],
           y=[20, 20, 80, 80, 20],
-          fill="toself",
-          fillcolor="rgba(241, 196, 15, 0.25)",
-          line=dict(color="#f1c40f", width=1.5, dash="dot"),
-          name="5. Calefacción Solar Pasiva",
-          hoverinfo="name",
+          fill='toself',
+          fillcolor='rgba(241, 196, 15, 0.2)',
+          line=dict(color='#f1c40f', width=1.5, dash='dot'),
+          name='5. Calefacción Solar Pasiva',
+          hoverinfo='name',
       )
   )
 
-  # -------------------------------------------------------------------
-  # 2. CÁLCULO Y TRAZADO DE VECTORES MENSUALES (Variabilidad de datos)
-  # -------------------------------------------------------------------
-  df_temp = df.copy()
-  df_temp["mes"] = df_temp["fecha"].dt.month
-  df_temp["nombre_mes"] = df_temp["fecha"].dt.strftime("%B")
-
-  # Agrupar por mes calculando promedios de Max y Min
-  resumen_mensual = (
-      df_temp.groupby(["mes", "nombre_mes"])
-      .agg(
-          t_max=("temperatura", "mean"),  # o 'max' para absolutos
-          t_min=("temperatura", "mean"),  # o 'min' para absolutos
-          hr_max=("humedad_relativa", "max"),
-          hr_min=("humedad_relativa", "min"),
-      )
-      .reset_index()
-  )
-
-  # Simplificación de oscilación térmica diaria promedio por mes
-  resumen_mensual["t_max_prom"] = df_temp.groupby("mes")["temperatura"].transform(
-      lambda x: x[x > x.median()].mean()
-  )
-  resumen_mensual["t_min_prom"] = df_temp.groupby("mes")["temperatura"].transform(
-      lambda x: x[x <= x.median()].mean()
-  )
-
-  # Trazar vectores por cada mes
-  colores_meses = [
-      "#1f77b4",
-      "#aec7e8",
-      "#2ca02c",
-      "#98df8a",
-      "#d62728",
-      "#ff9896",
-      "#9467bd",
-      "#c5b0d5",
-      "#8c564b",
-      "#c49c94",
-      "#e377c2",
-      "#f7b6d2",
-  ]
-
-  for idx, row in resumen_mensual.iterrows():
-    # Coordenadas Vector: (T_min, HR_max) -> (T_max, HR_min)
-    x_vals = [row["t_min_prom"], row["t_max_prom"]]
-    y_vals = [row["hr_max"], row["hr_min"]]
-
+  # Vectores Mensuales
+  colores = px.colors.qualitative.Plotly
+  for idx, row in df_resumen.iterrows():
     fig.add_trace(
         go.Scatter(
-            x=x_vals,
-            y=y_vals,
-            mode="lines+markers",
-            name=f"{row['nombre_mes'].capitalize()}",
-            line=dict(width=2.5, color=colores_meses[idx % len(colores_meses)]),
+            x=[row['T_min'], row['T_max']],
+            y=[row['HR_max'], row['HR_min']],
+            mode='lines+markers',
+            name=row['Mes'],
+            line=dict(width=2.5, color=colores[idx % len(colores)]),
             marker=dict(size=7),
             text=[
-                f"Noche ({row['nombre_mes']}): {x_vals[0]:.1f}°C, {y_vals[0]:.1f}% HR",
-                f"Día ({row['nombre_mes']}): {x_vals[1]:.1f}°C, {y_vals[1]:.1f}% HR",
+                (
+                    f"{row['Mes']} Nocturno: {row['T_min']:.1f}°C,"
+                    f" {row['HR_max']:.1f}% HR"
+                ),
+                (
+                    f"{row['Mes']} Diurno: {row['T_max']:.1f}°C,"
+                    f" {row['HR_min']:.1f}% HR"
+                ),
             ],
-            hoverinfo="text",
+            hoverinfo='text',
         )
     )
 
-  # -------------------------------------------------------------------
-  # 3. CONFIGURACIÓN DE EJES Y ESTILO
-  # -------------------------------------------------------------------
   fig.update_layout(
-      title="Diagrama Bioclimático de Givoni - Vectores de Variación Mensual",
+      title=f"Diagrama Bioclimático de Givoni - {df_estacion[col_names['estacion']].iloc[0]}",
       xaxis=dict(
-          title="Temperatura Seca del Aire (°C)",
+          title="Temperatura (°C)",
           range=[0, 45],
           dtick=5,
           gridcolor="#e0e0e0",
@@ -601,12 +620,19 @@ def generar_grafico_givoni(df):
           gridcolor="#e0e0e0",
       ),
       template="plotly_white",
-      height=650,
-      legend=dict(orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5),
+      height=600,
+      legend=dict(
+          orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5
+      ),
   )
 
-  return fig
+  return fig, None
 
-st.subheader("Carta Bioclimática de Givoni")
-fig_givoni = generar_grafico_givoni(df_filtrado)
-st.plotly_chart(fig_givoni, use_container_width=True)
+    # --- DIAGRAMA DE GIVONI ---
+st.subheader("🏛️ Diagrama Bioclimático de Givoni")
+fig_givoni, err_msg = generar_grafico_givoni_smn(df_estacion, col_names, meses)
+
+if fig_givoni:
+  st.plotly_chart(fig_givoni, use_container_width=True)
+else:
+  st.info(f"ℹ️ {err_msg}")
