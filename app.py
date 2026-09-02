@@ -43,16 +43,26 @@ def buscar_columna(df, patrones):
     return None
 
 def convertir_numerico(series):
-    """Convierte una serie a numérico, manejando comas como decimales y valores no válidos."""
+    """
+    Convierte una serie a numérico, manejando comas como decimales.
+    Elimina 'S/D', 'S/P', espacios y convierte correctamente.
+    """
     if series.dtype == 'object':
-        # Reemplazar comas por puntos y eliminar caracteres no numéricos
-        series = series.astype(str).str.replace(',', '.', regex=False)
-        series = series.str.replace('S/D', '', regex=False).str.replace('S/P', '', regex=False)
-        series = series.str.replace('s/d', '', regex=False).str.replace('s/p', '', regex=False)
+        # Asegurar que sea string
+        series = series.astype(str)
+        # Reemplazar comas por puntos (decimales)
+        series = series.str.replace(',', '.', regex=False)
+        # Eliminar 'S/D', 'S/P' y espacios en blanco
+        series = series.str.replace('S/D', '', regex=False)
+        series = series.str.replace('S/P', '', regex=False)
         series = series.str.strip()
         # Reemplazar cadenas vacías con NaN
         series = series.replace('', np.nan)
-    return pd.to_numeric(series, errors='coerce')
+        # Convertir a numérico
+        return pd.to_numeric(series, errors='coerce')
+    else:
+        # Si ya es numérico, asegurar que no tenga errores
+        return pd.to_numeric(series, errors='coerce')
 
 # --- 1. CARGA DE DATOS ---
 @st.cache_data
@@ -110,9 +120,12 @@ def load_data():
                col_names['variable'], col_names['estadistico']]
     
     # --- DETECTAR VARIABLE DE VIENTO ---
+    # Buscar en la columna 'variable' cualquier fila que contenga 'frecuencia' y 'velocidad'
     pattern_viento = re.compile(r'frecuencia.*velocidad', re.IGNORECASE)
+    # También buscar por '‰' que aparece en el nombre
     mask_viento = df_raw[col_names['variable']].str.contains(pattern_viento, na=False)
     if not mask_viento.any():
+        # Si no, buscar por 'Frecuencia (‰)'
         pattern_viento2 = re.compile(r'frecuencia.*‰', re.IGNORECASE)
         mask_viento = df_raw[col_names['variable']].str.contains(pattern_viento2, na=False)
     
@@ -120,7 +133,8 @@ def load_data():
     df_viento_raw = df_raw[mask_viento].copy()
     df_no_viento = df_raw[~mask_viento].copy()
     
-    # --- DATOS DE VIENTO ---
+    # --- DATOS DE VIENTO (formato ancho) ---
+    # Todas las columnas que no son id_vars son períodos (meses + Anual)
     wind_cols = [col for col in df_viento_raw.columns if col not in id_vars]
     df_wind = df_viento_raw[id_vars + wind_cols].copy()
     
@@ -162,9 +176,6 @@ def load_data():
 df_long, df_wind, wind_cols, col_names, meses, periodos, variable_viento = load_data()
 if df_long.empty:
     st.stop()
-
-# Asegurar que df_long['Valor'] sea numérico (por si acaso)
-df_long['Valor'] = pd.to_numeric(df_long['Valor'], errors='coerce')
 
 # --- 2. FILTROS ---
 st.sidebar.header("🔍 Filtros")
@@ -233,7 +244,6 @@ with col1:
             df_completo = pd.DataFrame({'Mes_num': range(1, 13)})
             df_completo['Mes'] = df_completo['Mes_num'].map({i+1: m for i, m in enumerate(meses)})
             df_completo = df_completo.merge(df_temp[['Mes_num', 'Valor']], on='Mes_num', how='left')
-            # Forzar numérico
             df_completo['Valor'] = pd.to_numeric(df_completo['Valor'], errors='coerce')
             fig.add_trace(go.Scatter(
                 x=df_completo['Mes'],
@@ -302,11 +312,14 @@ st.subheader("🌬️ Rosa de los Vientos")
 
 # --- SELECTOR DE PERÍODO PARA VIENTO ---
 if variable_viento and not df_wind.empty:
+    # Filtrar datos de viento para la estación seleccionada
     df_wind_estacion = df_wind[df_wind[col_estacion] == estacion_seleccionada]
     
     if not df_wind_estacion.empty:
+        # Períodos disponibles: columnas que están en 'periodos' y existen en df_wind_estacion
         periodos_disponibles = [p for p in periodos if p in df_wind_estacion.columns]
         if periodos_disponibles:
+            # Ordenar: meses primero, luego Anual
             orden = {m: i for i, m in enumerate(meses)}
             orden['Anual'] = 12
             periodos_disponibles.sort(key=lambda x: orden.get(x, 99))
@@ -331,11 +344,13 @@ col_wind, col_otros = st.columns([2, 1])
 
 with col_wind:
     if variable_viento and periodo_viento and not df_wind_estacion.empty:
+        # Extraer frecuencias y velocidades para cada dirección
         direcciones = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
         frecuencias = []
         velocidades = []
         
         for dir in direcciones:
+            # Buscar fila de Frecuencia
             freq_row = df_wind_estacion[
                 (df_wind_estacion[col_estadistico] == f'Frecuencia {dir}')
             ]
@@ -352,6 +367,7 @@ with col_wind:
                 frecuencias.append(0)
                 velocidades.append(0)
         
+        # CALMA
         calma_row = df_wind_estacion[
             (df_wind_estacion[col_estadistico] == 'Frecuencia CALMA')
         ]
@@ -364,31 +380,21 @@ with col_wind:
                 'Velocidad (km/h)': velocidades
             })
             
-            # Cambiar a fondo claro
             fig_wind = px.bar_polar(
                 df_wind_plot,
                 r='Frecuencia (‰)',
                 theta='Dirección',
                 color='Velocidad (km/h)',
-                color_continuous_scale=px.colors.sequential.Viridis,  # más claro
-                template='plotly_white',  # fondo blanco
+                color_continuous_scale=px.colors.sequential.Plasma,
+                template='plotly_white',  # <--- FONDO CLARO
                 title=f"Rosa de Vientos - {estacion_seleccionada} ({periodo_viento})",
                 hover_data={'Velocidad (km/h)': True},
                 barmode='relative'
             )
-            # Ajustar colores de ejes para que se vean bien en fondo claro
             fig_wind.update_layout(
                 polar=dict(
-                    radialaxis=dict(
-                        visible=True, 
-                        tickfont=dict(size=12, color='black'),
-                        gridcolor='rgba(0,0,0,0.1)'
-                    ),
-                    angularaxis=dict(
-                        direction="clockwise", 
-                        period=8, 
-                        tickfont=dict(size=14, color='black')
-                    )
+                    radialaxis=dict(visible=True, tickfont=dict(size=12), gridcolor='rgba(0,0,0,0.2)'),
+                    angularaxis=dict(direction="clockwise", period=8, tickfont=dict(size=14))
                 ),
                 height=500,
                 width=500,
@@ -416,6 +422,7 @@ with col_otros:
         if est in estadisticos:
             df_kpi = df_var[df_var[col_estadistico] == est]
             if not df_kpi.empty:
+                # Convertir a numérico y eliminar NaN
                 valores = pd.to_numeric(df_kpi['Valor'], errors='coerce').dropna()
                 if not valores.empty:
                     kpi_data[est] = valores.mean()
