@@ -140,8 +140,8 @@ def load_data():
         var_name='Mes',
         value_name='Valor'
     )
-    # Reforzar conversión de la columna Valor
-    df_long['Valor'] = pd.to_numeric(df_long['Valor'], errors='coerce')
+    # <--- CAMBIO CLAVE: usar convertir_numerico en lugar de pd.to_numeric
+    df_long['Valor'] = convertir_numerico(df_long['Valor'])
     
     mes_map = {m: i+1 for i, m in enumerate(meses)}
     df_long['Mes_num'] = df_long['Mes'].map(mes_map)
@@ -236,7 +236,7 @@ with col1:
             df_completo = pd.DataFrame({'Mes_num': range(1, 13)})
             df_completo['Mes'] = df_completo['Mes_num'].map({i+1: m for i, m in enumerate(meses)})
             df_completo = df_completo.merge(df_temp[['Mes_num', 'Valor']], on='Mes_num', how='left')
-            # <--- CORRECCIÓN: usar convertir_numerico en vez de pd.to_numeric
+            # Forzar conversión
             df_completo['Valor'] = convertir_numerico(df_completo['Valor'])
             fig.add_trace(go.Scatter(
                 x=df_completo['Mes'],
@@ -260,7 +260,7 @@ with col1:
         df_completo = pd.DataFrame({'Mes_num': range(1, 13)})
         df_completo['Mes'] = df_completo['Mes_num'].map({i+1: m for i, m in enumerate(meses)})
         df_completo = df_completo.merge(df_final[['Mes_num', 'Valor']], on='Mes_num', how='left')
-        # <--- CORRECCIÓN: usar convertir_numerico en vez de pd.to_numeric
+        # Forzar conversión
         df_completo['Valor'] = convertir_numerico(df_completo['Valor'])
         
         fig_line = px.line(
@@ -410,7 +410,6 @@ with col_otros:
     for est in estadisticos_puntuales:
         df_kpi = df_var[df_var[col_estadistico] == est]
         if not df_kpi.empty:
-            # <--- CORRECCIÓN: usar convertir_numerico
             valores = convertir_numerico(df_kpi['Valor']).dropna()
             if not valores.empty:
                 kpi_data[est] = valores.iloc[0]
