@@ -5,7 +5,4 @@ gdown
 folium
 streamlit-folium
 numpy
-geopandas
-fiona
-shapely
-pyproj
+
