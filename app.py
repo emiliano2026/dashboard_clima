@@ -285,7 +285,7 @@ with col2:
         st.write(f"Período: {periodo}")
         
         # Crear mapa con zoom=7 para ver toda la provincia de Buenos Aires
-        m = folium.Map(location=[float(lat), float(lon)], zoom_start=7)
+        m = folium.Map(location=[float(lat), float(lon)], zoom_start=6)
         
         # Agregar marcador circular hueco (sin relleno, borde rojo, pequeño)
         folium.CircleMarker(
@@ -303,7 +303,7 @@ with col2:
         st.warning("Datos de ubicación no disponibles.")
 
 # --- 5. ROSA DE VIENTOS ---
-st.subheader(🧭 Rosa de los Vientos")
+st.subheader("🧭 Rosa de los Vientos")
 
 if variable_viento and not df_wind.empty:
     df_wind_estacion = df_wind[df_wind[col_estacion] == estacion_seleccionada]
