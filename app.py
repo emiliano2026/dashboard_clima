@@ -62,7 +62,7 @@ def convertir_todas_numericas(df, columnas):
 # --- 1. CARGA DE DATOS ---
 @st.cache_data
 def load_data():
-    file_id = "1-XZ-eYH7iyxJpaWerNaBERy_joHr4lLJ"
+    file_id = "1J4sG2xvwR-LXCqowHhg2SMPMonvRKmzafg108eMQals"
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     output = "datos_clima_smn.csv"
     
