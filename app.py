@@ -301,11 +301,11 @@ with col2:
         st.write(f"Altura: {altura} msnm")
         st.write(f"Período: {periodo}")
         # <--- MODIFICADO: zoom_start cambiado de 10 a 7 para ver toda la provincia
-        m = folium.Map(location=[float(lat), float(lon)], zoom_start=5)
+        m = folium.Map(location=[float(lat), float(lon)], zoom_start=6)
         folium.Marker(
             [float(lat), float(lon)],
             popup=f"{estacion_seleccionada}<br>Altura: {altura} msnm",
-            icon=folium.Icon(color="red", icon="cloud"),
+            icon=folium.Icon(color="red", icon="cloud", width: 10px, height: 10px),
         ).add_to(m)
         st_folium(m, width=400, height=300)
     else:
