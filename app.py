@@ -217,177 +217,6 @@ if superponer:
         default=estadisticos[:2] if len(estadisticos) >= 2 else estadisticos
     )
 
-#----------------------------------------------------------------------------------------------------------------------
-def generar_grafico_givoni(df_long, estacion_seleccionada, col_names, meses):
-  """Genera el Diagrama Bioclimático de Givoni a partir de las normales mensuales del SMN."""
-  col_est = col_names['estacion']
-  col_var = col_names['variable']
-  col_estat = col_names['estadistico']
-
-  df_est = df_long[df_long[col_est] == estacion_seleccionada].copy()
-
-  def obtener_serie(patron_var, patron_estat=None):
-    mask = df_est[col_var].str.contains(patron_var, case=False, na=False)
-    if patron_estat:
-      mask = mask & df_est[col_estat].str.contains(
-          patron_estat, case=False, na=False
-      )
-    df_sub = df_est[mask]
-    if df_sub.empty:
-      return None
-    return df_sub.groupby('Mes_num')['Valor'].mean()
-
-  t_max_serie = (
-      obtener_serie('temperatura', 'max')
-      or obtener_serie('temperatura maxima')
-      or obtener_serie('temperatura', 'promedio')
-  )
-  t_min_serie = (
-      obtener_serie('temperatura', 'min')
-      or obtener_serie('temperatura minima')
-      or obtener_serie('temperatura', 'promedio')
-  )
-  hr_serie = obtener_serie('humedad')
-
-  if t_max_serie is None or t_min_serie is None or hr_serie is None:
-    return None
-
-  mes_map = {i + 1: m for i, m in enumerate(meses)}
-  df_givoni = pd.DataFrame({'Mes_num': range(1, 13)})
-  df_givoni['Mes'] = df_givoni['Mes_num'].map(mes_map)
-  df_givoni['T_max'] = df_givoni['Mes_num'].map(t_max_serie)
-  df_givoni['T_min'] = df_givoni['Mes_num'].map(t_min_serie)
-  df_givoni['HR_med'] = df_givoni['Mes_num'].map(hr_serie)
-
-  df_givoni['HR_max'] = (df_givoni['HR_med'] * 1.25).clip(upper=98)
-  df_givoni['HR_min'] = (df_givoni['HR_med'] * 0.75).clip(lower=15)
-
-  fig = go.Figure()
-
-  zonas = [
-      {
-          'x': [20, 26, 26, 20, 20],
-          'y': [20, 20, 80, 80, 20],
-          'color': 'rgba(46, 204, 113, 0.35)',
-          'line': '#2ecc71',
-          'name': '1. Confort Térmico',
-      },
-      {
-          'x': [20, 32, 32, 26, 20],
-          'y': [20, 20, 85, 85, 20],
-          'color': 'rgba(52, 152, 219, 0.25)',
-          'line': '#3498db',
-          'name': '2. Ventilación Natural',
-      },
-      {
-          'x': [20, 35, 35, 20, 20],
-          'y': [20, 20, 50, 50, 20],
-          'color': 'rgba(230, 126, 34, 0.2)',
-          'line': '#e67e22',
-          'name': '3. Masa Térmica',
-      },
-      {
-          'x': [20, 40, 40, 20, 20],
-          'y': [10, 10, 45, 45, 10],
-          'color': 'rgba(155, 89, 182, 0.2)',
-          'line': '#9b59b6',
-          'name': '4. Enfriamiento Evaporativo',
-      },
-      {
-          'x': [10, 20, 20, 10, 10],
-          'y': [20, 20, 80, 80, 20],
-          'color': 'rgba(241, 196, 15, 0.25)',
-          'line': '#f1c40f',
-          'name': '5. Calefacción Solar Pasiva',
-      },
-  ]
-
-  for z in zonas:
-    fig.add_trace(
-        go.Scatter(
-            x=z['x'],
-            y=z['y'],
-            fill='toself',
-            fillcolor=z['color'],
-            line=dict(color=z['line'], width=1.5),
-            name=z['name'],
-            hoverinfo='name',
-        )
-    )
-
-  colores = [
-      '#1f77b4',
-      '#aec7e8',
-      '#2ca02c',
-      '#98df8a',
-      '#d62728',
-      '#ff9896',
-      '#9467bd',
-      '#c5b0d5',
-      '#8c564b',
-      '#c49c94',
-      '#e377c2',
-      '#f7b6d2',
-  ]
-
-  for idx, row in df_givoni.iterrows():
-    if pd.isna(row['T_min']) or pd.isna(row['T_max']):
-      continue
-
-    x_vals = [row['T_min'], row['T_max']]
-    y_vals = [row['HR_max'], row['HR_min']]
-
-    fig.add_trace(
-        go.Scatter(
-            x=x_vals,
-            y=y_vals,
-            mode='lines+markers',
-            name=str(row['Mes']),
-            line=dict(width=2.5, color=colores[idx % len(colores)]),
-            marker=dict(size=6),
-            text=[
-                (
-                    f"<b>{row['Mes']} (Noche)</b><br>Temp Min:"
-                    f" {row['T_min']:.1f}°C<br>HR Max: {row['HR_max']:.1f}%"
-                ),
-                (
-                    f"<b>{row['Mes']} (Día)</b><br>Temp Max:"
-                    f" {row['T_max']:.1f}°C<br>HR Min: {row['HR_min']:.1f}%"
-                ),
-            ],
-            hoverinfo='text',
-        )
-    )
-
-  fig.update_layout(
-      title=(
-          f'Diagrama Bioclimático de Givoni - {estacion_seleccionada} (Vectores'
-          ' Mensuales)'
-      ),
-      xaxis=dict(
-          title='Temperatura (°C)',
-          range=[0, 45],
-          dtick=5,
-          gridcolor='#e0e0e0',
-      ),
-      yaxis=dict(
-          title='Humedad Relativa (%)',
-          range=[0, 100],
-          dtick=10,
-          gridcolor='#e0e0e0',
-      ),
-      template='plotly_white',
-      height=600,
-      legend=dict(
-          orientation='h', yanchor='bottom', y=-0.3, xanchor='center', x=0.5
-      ),
-  )
-
-  return fig
-
-#------------------------------------------------------------------------------------------------------------------------------------------
-
-
 # --- 3. UBICACIÓN ---
 df_ubicacion = df_long[df_long[col_estacion] == estacion_seleccionada]
 if not df_ubicacion.empty:
@@ -471,7 +300,8 @@ with col2:
     if lat and lon:
         st.write(f"Altura: {altura} msnm")
         st.write(f"Período: {periodo}")
-        m = folium.Map(location=[float(lat), float(lon)], zoom_start=10)
+        # <--- MODIFICADO: zoom_start cambiado de 10 a 7 para ver toda la provincia
+        m = folium.Map(location=[float(lat), float(lon)], zoom_start=7)
         folium.Marker(
             [float(lat), float(lon)],
             popup=f"{estacion_seleccionada}<br>Altura: {altura} msnm",
@@ -537,12 +367,13 @@ with col_wind:
                 'Velocidad (km/h)': velocidades
             })
             
+            # <--- MODIFICADO: paleta de colores Spectral invertida (azul → rojo)
             fig_wind = px.bar_polar(
                 df_wind_plot,
                 r='Frecuencia (‰)',
                 theta='Dirección',
                 color='Velocidad (km/h)',
-                color_continuous_scale=px.colors.sequential.Plasma,
+                color_continuous_scale='Spectral_r',  # <--- CAMBIO AQUÍ
                 template='plotly_white',
                 title=f"Rosa de Vientos - {estacion_seleccionada} ({periodo_viento})",
                 hover_data={'Velocidad (km/h)': True},
@@ -608,20 +439,7 @@ with st.expander("📋 Ver todos los datos de la variable seleccionada"):
     else:
         st.dataframe(df_final[['Mes', 'Valor']] if not df_final.empty else pd.DataFrame())
 
-
-#-----------------------------------------------------------------------------------------------------------------------------
-# --- 8. DIAGRAMA DE GIVONI ---
-st.subheader("🏛️ Diagrama Bioclimático de Givoni")
-
-fig_givoni = generar_grafico_givoni(
-    df_long, estacion_seleccionada, col_names, meses
-)
-
-if fig_givoni is not None:
-  st.plotly_chart(fig_givoni, use_container_width=True)
-else:
-  st.info(
-      "ℹ️ No se encontraron suficientes variables de Temperatura y Humedad"
-      f" Relativa para generar el Diagrama de Givoni en {estacion_seleccionada}."
-  )
+# --- 8. DIAGRAMA DE GIVONI (ELIMINADO) ---
+# <--- MODIFICADO: Se eliminó toda la sección del Diagrama de Givoni
+# La función generar_grafico_givoni ya no existe y no se muestra nada.
 
