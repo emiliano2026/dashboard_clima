@@ -301,7 +301,7 @@ with col2:
         st.write(f"Altura: {altura} msnm")
         st.write(f"Período: {periodo}")
         # <--- MODIFICADO: zoom_start cambiado de 10 a 7 para ver toda la provincia
-        m = folium.Map(location=[float(lat), float(lon)], zoom_start=7)
+        m = folium.Map(location=[float(lat), float(lon)], zoom_start=5)
         folium.Marker(
             [float(lat), float(lon)],
             popup=f"{estacion_seleccionada}<br>Altura: {altura} msnm",
@@ -312,7 +312,7 @@ with col2:
         st.warning("Datos de ubicación no disponibles.")
 
 # --- 5. ROSA DE VIENTOS ---
-st.subheader("🌬️ Rosa de los Vientos")
+st.subheader("🧭 Rosa de los Vientos")
 
 if variable_viento and not df_wind.empty:
     df_wind_estacion = df_wind[df_wind[col_estacion] == estacion_seleccionada]
