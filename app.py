@@ -8,8 +8,6 @@ import gdown
 import os
 import numpy as np
 import re
-import geopandas as gpd
-import xml.etree.ElementTree as ET
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Dashboard Clima IIPAC", layout="wide")
@@ -46,48 +44,26 @@ def convertir_numerico(series):
     """Convierte una serie a numérico, manejando comas como decimales y múltiples dtypes."""
     if series is None:
         return series
+    
+    # Si la serie ya es puramente numérica, convertir directamente
     if pd.api.types.is_numeric_dtype(series):
         return pd.to_numeric(series, errors='coerce')
+    
+    # Convertir a texto para reemplazar comas, espacios y valores sin dato del SMN
     s_str = series.astype(str).str.strip()
     s_str = s_str.str.replace(',', '.', regex=False)
     s_str = s_str.str.replace('S/D', '', regex=False).str.replace('S/P', '', regex=False)
     s_str = s_str.str.strip()
     s_str = s_str.replace(['', 'nan', 'None', 'NaN', 'null'], np.nan)
+    
     return pd.to_numeric(s_str, errors='coerce')
 
 def convertir_todas_numericas(df, columnas):
+    """Aplica convertir_numerico a una lista de columnas."""
     for col in columnas:
         if col in df.columns:
             df[col] = convertir_numerico(df[col])
     return df
-
-def extraer_colores_sld(archivo_sld):
-    """Parsea un archivo SLD y extrae el color de relleno para cada clase."""
-    colores = {}
-    try:
-        tree = ET.parse(archivo_sld)
-        root = tree.getroot()
-        # Namespace de SLD (si existe)
-        ns = {'sld': 'http://www.opengis.net/sld',
-              'ogc': 'http://www.opengis.net/ogc'}
-        
-        # Buscar todas las reglas
-        for rule in root.findall('.//sld:Rule', ns):
-            # Obtener el filtro (nombre de la zona)
-            filter_elem = rule.find('.//ogc:PropertyIsEqualTo/ogc:Literal', ns)
-            if filter_elem is not None:
-                zona = filter_elem.text
-            else:
-                continue
-            
-            # Obtener el color de relleno
-            fill_elem = rule.find('.//sld:PolygonSymbolizer/sld:Fill/sld:CssParameter[@name="fill"]', ns)
-            if fill_elem is not None:
-                color = fill_elem.text
-                colores[zona] = color
-    except Exception as e:
-        st.warning(f"No se pudo leer el SLD: {e}")
-    return colores
 
 # --- 1. CARGA DE DATOS ---
 @st.cache_data
@@ -104,10 +80,12 @@ def load_data():
         first_line = f.readline()
         sep = '|' if '|' in first_line else (';' if ';' in first_line else ',')
     
+    # Leer como texto para manejar decimales
     df_raw = pd.read_csv(output, delimiter=sep, skipinitialspace=True, 
                          encoding='utf-8', dtype=str, keep_default_na=False)
     df_raw.columns = df_raw.columns.str.strip()
     
+    # --- MAPEO DE COLUMNAS ---
     mapeo = {
         'provincia': ['provincia'],
         'estacion': ['estación', 'estacion'],
@@ -128,19 +106,23 @@ def load_data():
             st.error(f"❌ No se encontró la columna para '{key}'. Columnas disponibles: {list(df_raw.columns)}")
             st.stop()
     
+    # --- MESES Y PERÍODOS ---
     meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
     meses_encontrados = [m for m in meses if m in df_raw.columns]
     if 'Anual' not in df_raw.columns:
         df_raw['Anual'] = ''
     periodos = meses_encontrados + ['Anual']
     
+    # --- ID_VARS ---
     id_vars = [col_names['provincia'], col_names['estacion'], col_names['latitud'], 
                col_names['longitud'], col_names['altura'], col_names['periodo'],
                col_names['variable'], col_names['estadistico']]
     
+    # --- CONVERTIR TODAS LAS COLUMNAS NUMÉRICAS (meses y Anual) ---
     columnas_a_convertir = [col for col in df_raw.columns if col in meses or col == 'Anual']
     df_raw = convertir_todas_numericas(df_raw, columnas_a_convertir)
     
+    # --- DETECTAR VARIABLE DE VIENTO ---
     pattern_viento = re.compile(r'frecuencia.*velocidad', re.IGNORECASE)
     mask_viento = df_raw[col_names['variable']].str.contains(pattern_viento, na=False)
     if not mask_viento.any():
@@ -150,6 +132,7 @@ def load_data():
     df_viento_raw = df_raw[mask_viento].copy()
     df_no_viento = df_raw[~mask_viento].copy()
     
+    # --- DATOS DE VIENTO ---
     wind_cols = [col for col in df_viento_raw.columns if col not in id_vars]
     df_wind = df_viento_raw[id_vars + wind_cols].copy()
     df_wind = convertir_todas_numericas(df_wind, wind_cols)
@@ -157,6 +140,7 @@ def load_data():
         nombre_real = col_names[col]
         df_wind[nombre_real] = df_wind[nombre_real].str.strip()
     
+    # --- DATOS MENSUALES (formato largo) ---
     df_long = pd.melt(
         df_no_viento,
         id_vars=id_vars,
@@ -184,34 +168,6 @@ df_long, df_wind, wind_cols, col_names, meses, periodos, variable_viento = load_
 if df_long.empty:
     st.stop()
 
-# --- CARGA DE CAPA GEOGRÁFICA (Zonas Bioclimáticas) ---
-@st.cache_data
-def load_zonas_bioclimaticas():
-    gpkg_path = "ZonasBioclimaticas_IRAM-11603_Arg_Curvas.gpkg"
-    sld_path = "estilo_zonasBioclimaticas_curvas.sld"
-    
-    if os.path.exists(gpkg_path):
-        gdf = gpd.read_file(gpkg_path)
-        # Asegurar que la geometría esté en WGS84 (lat/lon)
-        if gdf.crs is not None and gdf.crs != 'EPSG:4326':
-            gdf = gdf.to_crs('EPSG:4326')
-        
-        # Extraer colores del SLD
-        colores_zona = {}
-        if os.path.exists(sld_path):
-            colores_zona = extraer_colores_sld(sld_path)
-        else:
-            # Paleta por defecto si no hay SLD
-            zonas_unicas = gdf['ZONA'].unique()
-            paleta = px.colors.qualitative.Set3
-            colores_zona = {zona: paleta[i % len(paleta)] for i, zona in enumerate(sorted(zonas_unicas))}
-        
-        return gdf, colores_zona
-    else:
-        return None, None
-
-gdf_zonas, colores_zonas = load_zonas_bioclimaticas()
-
 # --- 2. FILTROS ---
 st.sidebar.header("🔍 Filtros")
 
@@ -229,6 +185,7 @@ if df_valid.empty:
     st.warning(f"⚠️ No hay datos para la estación **{estacion_seleccionada}**. Elige otra.")
     st.stop()
 
+# --- VARIABLE (excluyendo viento) ---
 variables_todas = sorted(df_valid[col_variable].unique())
 variables = [v for v in variables_todas if v != variable_viento]
 if not variables:
@@ -237,6 +194,7 @@ if not variables:
 
 variable_seleccionada = st.sidebar.selectbox("📊 Variable", variables)
 
+# --- ESTADÍSTICOS (excluyendo "Número de años considerados") ---
 df_var = df_valid[df_valid[col_variable] == variable_seleccionada]
 todos_los_estadisticos = sorted(df_var[col_estadistico].unique())
 
@@ -249,6 +207,7 @@ if not estadisticos:
 
 estadistico_seleccionado = st.sidebar.selectbox("📈 Estadístico", estadisticos)
 
+# --- SUPERPOSICIÓN ---
 superponer = st.sidebar.checkbox("🔄 Superponer estadísticos")
 estadisticos_a_superponer = []
 if superponer:
@@ -341,42 +300,14 @@ with col2:
     if lat and lon:
         st.write(f"Altura: {altura} msnm")
         st.write(f"Período: {periodo}")
-        
-        # Crear mapa con zoom=7 para ver toda la provincia
+        # <--- MODIFICADO: zoom_start cambiado de 10 a 7 para ver toda la provincia
         m = folium.Map(location=[float(lat), float(lon)], zoom_start=7)
-        
-        # --- Agregar capa de zonas bioclimáticas (si existe) ---
-        if gdf_zonas is not None and not gdf_zonas.empty:
-            # Función de estilo para colorear según zona
-            def style_function(feature):
-                zona = feature['properties'].get('ZONA', '')
-                color = colores_zonas.get(zona, '#808080')  # gris por defecto
-                return {
-                    'fillColor': color,
-                    'color': 'black',
-                    'weight': 1,
-                    'fillOpacity': 0.6,
-                }
-            
-            # Agregar capa al mapa
-            folium.GeoJson(
-                gdf_zonas.__geo_interface__,
-                name='Zonas Bioclimáticas',
-                style_function=style_function,
-                tooltip=folium.GeoJsonTooltip(fields=['ZONA'], aliases=['Zona:']),
-            ).add_to(m)
-        
-        # Agregar marcador de la estación
         folium.Marker(
             [float(lat), float(lon)],
             popup=f"{estacion_seleccionada}<br>Altura: {altura} msnm",
             icon=folium.Icon(color="red", icon="cloud"),
         ).add_to(m)
-        
-        # Añadir control de capas
-        folium.LayerControl().add_to(m)
-        
-        st_folium(m, width=400, height=400)
+        st_folium(m, width=400, height=300)
     else:
         st.warning("Datos de ubicación no disponibles.")
 
@@ -436,13 +367,13 @@ with col_wind:
                 'Velocidad (km/h)': velocidades
             })
             
-            # Paleta Spectral invertida (azul → rojo)
+            # <--- MODIFICADO: paleta de colores Spectral invertida (azul → rojo)
             fig_wind = px.bar_polar(
                 df_wind_plot,
                 r='Frecuencia (‰)',
                 theta='Dirección',
                 color='Velocidad (km/h)',
-                color_continuous_scale='Spectral_r',
+                color_continuous_scale='Spectral_r',  # <--- CAMBIO AQUÍ
                 template='plotly_white',
                 title=f"Rosa de Vientos - {estacion_seleccionada} ({periodo_viento})",
                 hover_data={'Velocidad (km/h)': True},
@@ -469,7 +400,7 @@ with col_wind:
         elif not periodo_viento:
             st.info("ℹ️ Selecciona un período para ver la rosa de vientos.")
 
-# --- 6. OTROS DATOS ---
+# --- 6. OTROS DATOS (excluyendo "Número de años considerados") ---
 with col_otros:
     st.subheader("📊 Otros Datos")
     
@@ -507,4 +438,8 @@ with st.expander("📋 Ver todos los datos de la variable seleccionada"):
         st.dataframe(df_completo)
     else:
         st.dataframe(df_final[['Mes', 'Valor']] if not df_final.empty else pd.DataFrame())
+
+# --- 8. DIAGRAMA DE GIVONI (ELIMINADO) ---
+# <--- MODIFICADO: Se eliminó toda la sección del Diagrama de Givoni
+# La función generar_grafico_givoni ya no existe y no se muestra nada.
 
