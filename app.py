@@ -305,7 +305,7 @@ with col2:
         folium.Marker(
             [float(lat), float(lon)],
             popup=f"{estacion_seleccionada}<br>Altura: {altura} msnm",
-            icon=folium.Icon(color="red", icon="cloud", width: 10px, height: 10px),
+            icon=folium.Icon(color="red", icon="cloud", width=10, height=10),
         ).add_to(m)
         st_folium(m, width=400, height=300)
     else:
