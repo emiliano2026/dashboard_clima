@@ -59,6 +59,30 @@ def convertir_todas_numericas(df, columnas):
             df[col] = convertir_numerico(df[col])
     return df
 
+def convertir_fecha_excel(numero_serie):
+    """Convierte un número de serie de Excel (días desde 1900-01-01) a una fecha legible."""
+    if pd.isna(numero_serie):
+        return None
+    # Excel considera que 1900-01-01 es el día 1, pero tiene un bug: considera que 1900 fue bisiesto
+    # Para fechas posteriores a 1900-03-01, restamos 1 día
+    try:
+        # Si es un número entero o flotante
+        if isinstance(numero_serie, (int, float, np.integer, np.floating)):
+            # Excel serial date
+            from datetime import datetime, timedelta
+            # Excel comienza en 1900-01-01, pero tiene el bug del año 1900 bisiesto
+            # Para fechas posteriores a 1900-03-01, restamos 1 día
+            if numero_serie > 60:  # 1900-03-01 es el día 61
+                fecha = datetime(1899, 12, 30) + timedelta(days=numero_serie)
+            else:
+                fecha = datetime(1899, 12, 30) + timedelta(days=numero_serie)
+            return fecha.strftime("%d/%m/%Y")
+        else:
+            return str(numero_serie)
+    except:
+        return str(numero_serie)
+
+
 # --- 1. CARGA DE DATOS ---
 @st.cache_data
 def load_data():
@@ -419,7 +443,14 @@ with col_otros:
                 display = nombre.replace('valor', '').strip()
                 if display == '':
                     display = nombre
-                st.metric(label=display, value=f"{valor:.2f}" if isinstance(valor, (int, float, np.floating, np.integer)) else str(valor))
+                
+                # --- NUEVO: Convertir fechas si el nombre contiene "Fecha" ---
+                if 'fecha' in nombre.lower():
+                    valor_mostrar = convertir_fecha_excel(valor)
+                else:
+                    valor_mostrar = f"{valor:.2f}" if isinstance(valor, (int, float, np.floating, np.integer)) else str(valor)
+                
+                st.metric(label=display, value=valor_mostrar)
     else:
         st.info("No hay datos puntuales adicionales para esta variable.")
 
