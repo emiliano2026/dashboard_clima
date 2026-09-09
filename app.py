@@ -72,34 +72,19 @@ def load_data():
         with st.spinner("Descargando datos desde Google Drive..."):
             gdown.download(url, output, quiet=False)
     
-    # --- DETECTAR CODIFICACIÓN PROBANDO VARIAS OPCIONES ---
-    encodings = ['utf-8', 'latin-1', 'windows-1252', 'cp1252', 'iso-8859-1']
-    df_raw = None
-    sep = None
-    encoding_usado = None
+    # --- DETECTAR SEPARADOR LEYENDO LA PRIMERA LÍNEA ---
+    with open(output, 'r', encoding='latin-1') as f:
+        first_line = f.readline()
+        if '|' in first_line:
+            sep = '|'
+        elif ';' in first_line:
+            sep = ';'
+        else:
+            sep = ','
     
-    for enc in encodings:
-        try:
-            # Leer el archivo con esta codificación
-            with open(output, 'r', encoding=enc) as f:
-                first_line = f.readline()
-                sep = '|' if '|' in first_line else (';' if ';' in first_line else ',')
-            
-            # Intentar leer el CSV completo
-            df_raw = pd.read_csv(output, delimiter=sep, skipinitialspace=True, 
-                                 encoding=enc, dtype=str, keep_default_na=False)
-            encoding_usado = enc
-            break  # Si llegamos aquí, funcionó
-        except (UnicodeDecodeError, pd.errors.ParserError):
-            continue  # Probar con la siguiente codificación
-    
-    if df_raw is None:
-        st.error("❌ No se pudo leer el archivo con ninguna codificación. Verifica el formato.")
-        st.stop()
-    
-    # Mostrar la codificación usada (opcional, para depuración)
-    # st.info(f"📄 Codificación usada: {encoding_usado}")
-    
+    # --- LEER CSV CON CODIFICACIÓN LATIN-1 (la más común en Argentina) ---
+    df_raw = pd.read_csv(output, delimiter=sep, skipinitialspace=True,
+                         encoding='latin-1', dtype=str, keep_default_na=False)
     df_raw.columns = df_raw.columns.str.strip()
     
     # --- MAPEO DE COLUMNAS ---
