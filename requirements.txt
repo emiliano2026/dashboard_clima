@@ -5,4 +5,4 @@ gdown
 folium
 streamlit-folium
 numpy
-
+chardet
