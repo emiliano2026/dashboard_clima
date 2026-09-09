@@ -8,7 +8,6 @@ import gdown
 import os
 import numpy as np
 import re
-import chardet
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Dashboard Clima IIPAC", layout="wide")
@@ -63,84 +62,22 @@ def convertir_todas_numericas(df, columnas):
 # --- 1. CARGA DE DATOS ---
 @st.cache_data
 def load_data():
-    # ID del archivo en Google Drive
-    file_id = "1LPZclZ25n5NXZIeipmRLxRfRokYGtDyw"
+    file_id = "19E_EsuztAPsjmRbtiSskiIxOh1-0jNdC" 
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    output = "datos_clima_smn.csv"
+    output = "SMN_BASE_DATOS_COMPLETA_CORREGIDA_BsAs_Emi_ampliada.csv"
     
     if not os.path.exists(output):
         with st.spinner("Descargando datos desde Google Drive..."):
             gdown.download(url, output, quiet=False)
     
-    # --- ESTRATEGIA CORREGIDA ---
-    try:
-        # Leer archivo como binario
-        with open(output, 'rb') as f:
-            raw_bytes = f.read()
-        
-        # Intentar decodificar con utf-8, reemplazando caracteres no válidos
-        try:
-            text = raw_bytes.decode('utf-8')
-        except UnicodeDecodeError:
-            # Si falla, usar latin-1 que nunca falla
-            text = raw_bytes.decode('latin-1', errors='replace')
-            st.warning("⚠️ Se usó latin-1 porque utf-8 falló")
-        
-        # --- LIMPIAR SALTOS DE LÍNEA DENTRO DE CAMPOS ---
-        # Reemplazar \r\n o \n que estén dentro de un campo no entrecomillado
-        # La estrategia: eliminar saltos de línea que no estén precedidos por un separador de campo
-        # Primero, detectar el separador
-        lines = text.split('\n')
-        if len(lines) > 1:
-            first_line = lines[0]
-            if '|' in first_line and ';' not in first_line and ',' not in first_line:
-                sep = '|'
-            elif ';' in first_line:
-                sep = ';'
-            else:
-                sep = ','
-        else:
-            sep = ','
-        
-        # Unir líneas que no tengan el número correcto de separadores
-        # Asumimos que cada fila debe tener exactamente el mismo número de separadores que la primera línea
-        num_sep_esperado = first_line.count(sep)
-        lineas_corregidas = []
-        buffer = []
-        
-        for line in lines:
-            buffer.append(line)
-            # Si el buffer combinado tiene el número correcto de separadores, lo agregamos
-            combined = ' '.join(buffer)  # Reemplazar salto de línea por espacio
-            if combined.count(sep) >= num_sep_esperado:
-                lineas_corregidas.append(combined)
-                buffer = []
-        
-        # Si quedó algo en el buffer, agregarlo
-        if buffer:
-            lineas_corregidas.append(' '.join(buffer))
-        
-        text_corregido = '\n'.join(lineas_corregidas)
-        
-        # --- LEER CSV CON StringIO ---
-        from io import StringIO
-        df_raw = pd.read_csv(
-            StringIO(text_corregido), 
-            delimiter=sep, 
-            skipinitialspace=True,
-            dtype=str, 
-            keep_default_na=False,
-            engine='python',
-            on_bad_lines='skip'  # Saltar líneas problemáticas
-        )
-        
-    except Exception as e:
-        st.error(f"❌ Error al leer el archivo: {e}")
-        st.stop()
+    with open(output, 'r', encoding='utf-8') as f:
+        first_line = f.readline()
+        sep = '|' if '|' in first_line else (';' if ';' in first_line else ',')
     
+    df_raw = pd.read_csv(output, delimiter=sep, skipinitialspace=True, 
+                         encoding='utf-8', dtype=str, keep_default_na=False)
     df_raw.columns = df_raw.columns.str.strip()
     
-    # --- MAPEO DE COLUMNAS ---
     mapeo = {
         'provincia': ['provincia'],
         'estacion': ['estación', 'estacion'],
@@ -161,23 +98,19 @@ def load_data():
             st.error(f"❌ No se encontró la columna para '{key}'. Columnas disponibles: {list(df_raw.columns)}")
             st.stop()
     
-    # --- MESES Y PERÍODOS ---
     meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
     meses_encontrados = [m for m in meses if m in df_raw.columns]
     if 'Anual' not in df_raw.columns:
         df_raw['Anual'] = ''
     periodos = meses_encontrados + ['Anual']
     
-    # --- ID_VARS ---
     id_vars = [col_names['provincia'], col_names['estacion'], col_names['latitud'], 
                col_names['longitud'], col_names['altura'], col_names['periodo'],
                col_names['variable'], col_names['estadistico']]
     
-    # --- CONVERTIR TODAS LAS COLUMNAS NUMÉRICAS (meses y Anual) ---
     columnas_a_convertir = [col for col in df_raw.columns if col in meses or col == 'Anual']
     df_raw = convertir_todas_numericas(df_raw, columnas_a_convertir)
     
-    # --- DETECTAR VARIABLE DE VIENTO ---
     pattern_viento = re.compile(r'frecuencia.*velocidad', re.IGNORECASE)
     mask_viento = df_raw[col_names['variable']].str.contains(pattern_viento, na=False)
     if not mask_viento.any():
@@ -187,7 +120,6 @@ def load_data():
     df_viento_raw = df_raw[mask_viento].copy()
     df_no_viento = df_raw[~mask_viento].copy()
     
-    # --- DATOS DE VIENTO ---
     wind_cols = [col for col in df_viento_raw.columns if col not in id_vars]
     df_wind = df_viento_raw[id_vars + wind_cols].copy()
     df_wind = convertir_todas_numericas(df_wind, wind_cols)
@@ -195,7 +127,6 @@ def load_data():
         nombre_real = col_names[col]
         df_wind[nombre_real] = df_wind[nombre_real].str.strip()
     
-    # --- DATOS MENSUALES (formato largo) ---
     df_long = pd.melt(
         df_no_viento,
         id_vars=id_vars,
