@@ -72,58 +72,43 @@ def load_data():
         with st.spinner("Descargando datos desde Google Drive..."):
             gdown.download(url, output, quiet=False)
     
-    # --- PRIMERO, DETECTAR EL SEPARADOR Y LA CODIFICACIÓN ---
-    import csv
+    # --- DETECTAR CODIFICACIÓN CON CHARDET ---
+    with open(output, 'rb') as f:
+        raw_data = f.read()
+        resultado = chardet.detect(raw_data)
+        encoding = resultado['encoding'] if resultado else 'utf-8'
+        st.info(f"📄 Codificación detectada: {encoding}")
     
-    # Probar varias codificaciones
-    encodings = ['utf-8', 'latin-1', 'windows-1252', 'cp1252', 'iso-8859-1']
-    sep = None
+    # --- DETECTAR SEPARADOR AUTOMÁTICAMENTE ---
+    separadores = ['|', ';', ',', '\t']
+    sep_encontrado = None
     df_raw = None
-    encoding_usado = None
     
-    # Leer el archivo como texto para detectar el separador
-    for enc in encodings:
+    # Leer las primeras líneas para probar separadores
+    with open(output, 'r', encoding=encoding) as f:
+        lines = [f.readline() for _ in range(5)]  # Leer 5 líneas
+    
+    for sep in separadores:
         try:
-            with open(output, 'r', encoding=enc) as f:
-                # Leer las primeras líneas
-                sample = f.read(4096)
-                # Detectar separador con Sniffer
-                try:
-                    dialect = csv.Sniffer().sniff(sample)
-                    sep = dialect.delimiter
-                except:
-                    # Si falla, probar con separadores comunes
-                    if '|' in sample:
-                        sep = '|'
-                    elif ';' in sample:
-                        sep = ';'
-                    else:
-                        sep = ','
-                
-                # Volver al inicio del archivo y leerlo completo
-                f.seek(0)
-                # Intentar leer el CSV
-                df_raw = pd.read_csv(
-                    f, 
-                    delimiter=sep, 
-                    skipinitialspace=True,
-                    encoding=enc,
-                    dtype=str,
-                    keep_default_na=False,
-                    quoting=1,  # QUOTE_ALL para manejar comillas
-                    engine='python'  # Más tolerante a errores
-                )
-                encoding_usado = enc
-                break  # Si funcionó, salir del bucle
-        except (UnicodeDecodeError, pd.errors.ParserError, csv.Error) as e:
-            continue  # Probar con la siguiente codificación
+            # Contar cuántas columnas tiene cada línea con este separador
+            num_cols = [len(line.split(sep)) for line in lines if line.strip()]
+            if num_cols and all(n == num_cols[0] for n in num_cols) and num_cols[0] > 1:
+                sep_encontrado = sep
+                break
+        except:
+            continue
     
-    if df_raw is None:
-        st.error("❌ No se pudo leer el archivo con ninguna codificación o separador.")
+    if sep_encontrado is None:
+        st.error("❌ No se pudo detectar el separador. Verifica el formato del archivo.")
         st.stop()
     
-    # Mostrar información útil para depuración
-    st.info(f"📄 Archivo leído con éxito. Codificación: {encoding_usado}, Separador: '{sep}'")
+    # --- INTENTAR LEER CON EL SEPARADOR DETECTADO ---
+    try:
+        df_raw = pd.read_csv(output, delimiter=sep_encontrado, skipinitialspace=True, 
+                             encoding=encoding, dtype=str, keep_default_na=False)
+    except Exception as e:
+        st.error(f"❌ Error al leer el archivo: {e}")
+        st.stop()
     
     df_raw.columns = df_raw.columns.str.strip()
     
@@ -204,7 +189,6 @@ def load_data():
         variable_viento_encontrada = df_viento_raw[col_names['variable']].iloc[0]
     
     return df_long, df_wind, wind_cols, col_names, meses, periodos, variable_viento_encontrada
-
 # --- CARGAR DATOS ---
 df_long, df_wind, wind_cols, col_names, meses, periodos, variable_viento = load_data()
 if df_long.empty:
