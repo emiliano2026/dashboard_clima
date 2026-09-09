@@ -63,8 +63,8 @@ def convertir_todas_numericas(df, columnas):
 # --- 1. CARGA DE DATOS ---
 @st.cache_data
 def load_data():
-    # ID del archivo en Google Drive (actualizado)
-    file_id = "1LPZclZ25n5NXZIeipmRLxRfRokYGtDyw"  
+    # ID del archivo en Google Drive
+    file_id = "1LPZclZ25n5NXZIeipmRLxRfRokYGtDyw"
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     output = "datos_clima_smn.csv"
     
@@ -72,47 +72,53 @@ def load_data():
         with st.spinner("Descargando datos desde Google Drive..."):
             gdown.download(url, output, quiet=False)
     
-    # --- DETECTAR CODIFICACIÓN CON CHARDET ---
-    with open(output, 'rb') as f:
-        raw_data = f.read()
-        resultado = chardet.detect(raw_data)
-        encoding = resultado['encoding'] if resultado else 'utf-8'
-        st.info(f"📄 Codificación detectada: {encoding}")
-    
-    # --- DETECTAR SEPARADOR AUTOMÁTICAMENTE ---
-    separadores = ['|', ';', ',', '\t']
-    sep_encontrado = None
-    df_raw = None
-    
-    # Leer las primeras líneas para probar separadores
-    with open(output, 'r', encoding=encoding) as f:
-        lines = [f.readline() for _ in range(5)]  # Leer 5 líneas
-    
-    for sep in separadores:
-        try:
-            # Contar cuántas columnas tiene cada línea con este separador
-            num_cols = [len(line.split(sep)) for line in lines if line.strip()]
-            if num_cols and all(n == num_cols[0] for n in num_cols) and num_cols[0] > 1:
-                sep_encontrado = sep
-                break
-        except:
-            continue
-    
-    if sep_encontrado is None:
-        st.error("❌ No se pudo detectar el separador. Verifica el formato del archivo.")
-        st.stop()
-    
-    # --- INTENTAR LEER CON EL SEPARADOR DETECTADO ---
+    # --- ESTRATEGIA 1: Leer como binario y forzar reemplazo de caracteres no válidos ---
     try:
-        df_raw = pd.read_csv(output, delimiter=sep_encontrado, skipinitialspace=True, 
-                             encoding=encoding, dtype=str, keep_default_na=False)
+        with open(output, 'rb') as f:
+            raw_bytes = f.read()
+        
+        # Intentar decodificar con diferentes codificaciones, reemplazando errores
+        for enc in ['utf-8', 'latin-1', 'windows-1252', 'cp1252', 'iso-8859-1']:
+            try:
+                text = raw_bytes.decode(enc)
+                # Si llegamos aquí, la decodificación fue exitosa
+                break
+            except UnicodeDecodeError:
+                # Reemplazar caracteres no válidos
+                text = raw_bytes.decode(enc, errors='replace')
+                # Si se reemplazaron caracteres, mostramos advertencia
+                st.warning(f"⚠️ Se reemplazaron caracteres no válidos usando {enc}")
+                break
+        else:
+            # Si ningún encoding funciona, usar 'latin-1' que nunca falla
+            text = raw_bytes.decode('latin-1', errors='replace')
+            st.warning("⚠️ No se pudo detectar encoding. Usando latin-1 con reemplazo.")
+        
+        # Detectar separador: probar con |, ; y ,
+        lineas = text.split('\n')
+        if len(lineas) > 1:
+            primera_linea = lineas[0]
+            if '|' in primera_linea:
+                sep = '|'
+            elif ';' in primera_linea:
+                sep = ';'
+            else:
+                sep = ','
+        else:
+            sep = ','
+        
+        # Usar StringIO para leer el texto como CSV
+        from io import StringIO
+        df_raw = pd.read_csv(StringIO(text), delimiter=sep, skipinitialspace=True,
+                             dtype=str, keep_default_na=False, engine='python')
+        
     except Exception as e:
         st.error(f"❌ Error al leer el archivo: {e}")
         st.stop()
     
     df_raw.columns = df_raw.columns.str.strip()
     
-    # --- MAPEO DE COLUMNAS ---
+    # --- MAPEO DE COLUMNAS (igual que antes) ---
     mapeo = {
         'provincia': ['provincia'],
         'estacion': ['estación', 'estacion'],
@@ -189,6 +195,8 @@ def load_data():
         variable_viento_encontrada = df_viento_raw[col_names['variable']].iloc[0]
     
     return df_long, df_wind, wind_cols, col_names, meses, periodos, variable_viento_encontrada
+
+
 # --- CARGAR DATOS ---
 df_long, df_wind, wind_cols, col_names, meses, periodos, variable_viento = load_data()
 if df_long.empty:
