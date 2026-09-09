@@ -72,19 +72,59 @@ def load_data():
         with st.spinner("Descargando datos desde Google Drive..."):
             gdown.download(url, output, quiet=False)
     
-    # --- DETECTAR SEPARADOR LEYENDO LA PRIMERA LÍNEA ---
-    with open(output, 'r', encoding='latin-1') as f:
-        first_line = f.readline()
-        if '|' in first_line:
-            sep = '|'
-        elif ';' in first_line:
-            sep = ';'
-        else:
-            sep = ','
+    # --- PRIMERO, DETECTAR EL SEPARADOR Y LA CODIFICACIÓN ---
+    import csv
     
-    # --- LEER CSV CON CODIFICACIÓN LATIN-1 (la más común en Argentina) ---
-    df_raw = pd.read_csv(output, delimiter=sep, skipinitialspace=True,
-                         encoding='latin-1', dtype=str, keep_default_na=False)
+    # Probar varias codificaciones
+    encodings = ['utf-8', 'latin-1', 'windows-1252', 'cp1252', 'iso-8859-1']
+    sep = None
+    df_raw = None
+    encoding_usado = None
+    
+    # Leer el archivo como texto para detectar el separador
+    for enc in encodings:
+        try:
+            with open(output, 'r', encoding=enc) as f:
+                # Leer las primeras líneas
+                sample = f.read(4096)
+                # Detectar separador con Sniffer
+                try:
+                    dialect = csv.Sniffer().sniff(sample)
+                    sep = dialect.delimiter
+                except:
+                    # Si falla, probar con separadores comunes
+                    if '|' in sample:
+                        sep = '|'
+                    elif ';' in sample:
+                        sep = ';'
+                    else:
+                        sep = ','
+                
+                # Volver al inicio del archivo y leerlo completo
+                f.seek(0)
+                # Intentar leer el CSV
+                df_raw = pd.read_csv(
+                    f, 
+                    delimiter=sep, 
+                    skipinitialspace=True,
+                    encoding=enc,
+                    dtype=str,
+                    keep_default_na=False,
+                    quoting=1,  # QUOTE_ALL para manejar comillas
+                    engine='python'  # Más tolerante a errores
+                )
+                encoding_usado = enc
+                break  # Si funcionó, salir del bucle
+        except (UnicodeDecodeError, pd.errors.ParserError, csv.Error) as e:
+            continue  # Probar con la siguiente codificación
+    
+    if df_raw is None:
+        st.error("❌ No se pudo leer el archivo con ninguna codificación o separador.")
+        st.stop()
+    
+    # Mostrar información útil para depuración
+    st.info(f"📄 Archivo leído con éxito. Codificación: {encoding_usado}, Separador: '{sep}'")
+    
     df_raw.columns = df_raw.columns.str.strip()
     
     # --- MAPEO DE COLUMNAS ---
