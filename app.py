@@ -72,45 +72,67 @@ def load_data():
         with st.spinner("Descargando datos desde Google Drive..."):
             gdown.download(url, output, quiet=False)
     
-    # --- ESTRATEGIA 1: Leer como binario y forzar reemplazo de caracteres no válidos ---
+    # --- ESTRATEGIA CORREGIDA ---
     try:
+        # Leer archivo como binario
         with open(output, 'rb') as f:
             raw_bytes = f.read()
         
-        # Intentar decodificar con diferentes codificaciones, reemplazando errores
-        for enc in ['utf-8', 'latin-1', 'windows-1252', 'cp1252', 'iso-8859-1']:
-            try:
-                text = raw_bytes.decode(enc)
-                # Si llegamos aquí, la decodificación fue exitosa
-                break
-            except UnicodeDecodeError:
-                # Reemplazar caracteres no válidos
-                text = raw_bytes.decode(enc, errors='replace')
-                # Si se reemplazaron caracteres, mostramos advertencia
-                st.warning(f"⚠️ Se reemplazaron caracteres no válidos usando {enc}")
-                break
-        else:
-            # Si ningún encoding funciona, usar 'latin-1' que nunca falla
+        # Intentar decodificar con utf-8, reemplazando caracteres no válidos
+        try:
+            text = raw_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            # Si falla, usar latin-1 que nunca falla
             text = raw_bytes.decode('latin-1', errors='replace')
-            st.warning("⚠️ No se pudo detectar encoding. Usando latin-1 con reemplazo.")
+            st.warning("⚠️ Se usó latin-1 porque utf-8 falló")
         
-        # Detectar separador: probar con |, ; y ,
-        lineas = text.split('\n')
-        if len(lineas) > 1:
-            primera_linea = lineas[0]
-            if '|' in primera_linea:
+        # --- LIMPIAR SALTOS DE LÍNEA DENTRO DE CAMPOS ---
+        # Reemplazar \r\n o \n que estén dentro de un campo no entrecomillado
+        # La estrategia: eliminar saltos de línea que no estén precedidos por un separador de campo
+        # Primero, detectar el separador
+        lines = text.split('\n')
+        if len(lines) > 1:
+            first_line = lines[0]
+            if '|' in first_line and ';' not in first_line and ',' not in first_line:
                 sep = '|'
-            elif ';' in primera_linea:
+            elif ';' in first_line:
                 sep = ';'
             else:
                 sep = ','
         else:
             sep = ','
         
-        # Usar StringIO para leer el texto como CSV
+        # Unir líneas que no tengan el número correcto de separadores
+        # Asumimos que cada fila debe tener exactamente el mismo número de separadores que la primera línea
+        num_sep_esperado = first_line.count(sep)
+        lineas_corregidas = []
+        buffer = []
+        
+        for line in lines:
+            buffer.append(line)
+            # Si el buffer combinado tiene el número correcto de separadores, lo agregamos
+            combined = ' '.join(buffer)  # Reemplazar salto de línea por espacio
+            if combined.count(sep) >= num_sep_esperado:
+                lineas_corregidas.append(combined)
+                buffer = []
+        
+        # Si quedó algo en el buffer, agregarlo
+        if buffer:
+            lineas_corregidas.append(' '.join(buffer))
+        
+        text_corregido = '\n'.join(lineas_corregidas)
+        
+        # --- LEER CSV CON StringIO ---
         from io import StringIO
-        df_raw = pd.read_csv(StringIO(text), delimiter=sep, skipinitialspace=True,
-                             dtype=str, keep_default_na=False, engine='python')
+        df_raw = pd.read_csv(
+            StringIO(text_corregido), 
+            delimiter=sep, 
+            skipinitialspace=True,
+            dtype=str, 
+            keep_default_na=False,
+            engine='python',
+            on_bad_lines='skip'  # Saltar líneas problemáticas
+        )
         
     except Exception as e:
         st.error(f"❌ Error al leer el archivo: {e}")
@@ -118,7 +140,7 @@ def load_data():
     
     df_raw.columns = df_raw.columns.str.strip()
     
-    # --- MAPEO DE COLUMNAS (igual que antes) ---
+    # --- MAPEO DE COLUMNAS ---
     mapeo = {
         'provincia': ['provincia'],
         'estacion': ['estación', 'estacion'],
@@ -195,7 +217,6 @@ def load_data():
         variable_viento_encontrada = df_viento_raw[col_names['variable']].iloc[0]
     
     return df_long, df_wind, wind_cols, col_names, meses, periodos, variable_viento_encontrada
-
 
 # --- CARGAR DATOS ---
 df_long, df_wind, wind_cols, col_names, meses, periodos, variable_viento = load_data()
