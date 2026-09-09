@@ -62,7 +62,6 @@ def convertir_todas_numericas(df, columnas):
 
 # --- 1. CARGA DE DATOS ---
 @st.cache_data
-
 def load_data():
     # ID del archivo en Google Drive (actualizado)
     file_id = "1-WQeKO7A5_iLcS8QNIjt_iFDp2VgWEPv"
@@ -73,22 +72,34 @@ def load_data():
         with st.spinner("Descargando datos desde Google Drive..."):
             gdown.download(url, output, quiet=False)
     
-    # --- DETECTAR CODIFICACIÓN AUTOMÁTICAMENTE ---
-    with open(output, 'rb') as f:
-        raw_data = f.read()
-        resultado = chardet.detect(raw_data)
-        encoding = resultado['encoding'] if resultado else 'utf-8'
-        # Opcional: mostrar la codificación detectada (útil para depuración)
-        # st.info(f"📄 Codificación detectada: {encoding}")
+    # --- DETECTAR CODIFICACIÓN PROBANDO VARIAS OPCIONES ---
+    encodings = ['utf-8', 'latin-1', 'windows-1252', 'cp1252', 'iso-8859-1']
+    df_raw = None
+    sep = None
+    encoding_usado = None
     
-    # Leer el archivo con la codificación detectada
-    with open(output, 'r', encoding=encoding) as f:
-        first_line = f.readline()
-        sep = '|' if '|' in first_line else (';' if ';' in first_line else ',')
+    for enc in encodings:
+        try:
+            # Leer el archivo con esta codificación
+            with open(output, 'r', encoding=enc) as f:
+                first_line = f.readline()
+                sep = '|' if '|' in first_line else (';' if ';' in first_line else ',')
+            
+            # Intentar leer el CSV completo
+            df_raw = pd.read_csv(output, delimiter=sep, skipinitialspace=True, 
+                                 encoding=enc, dtype=str, keep_default_na=False)
+            encoding_usado = enc
+            break  # Si llegamos aquí, funcionó
+        except (UnicodeDecodeError, pd.errors.ParserError):
+            continue  # Probar con la siguiente codificación
     
-    # Leer el CSV con la misma codificación
-    df_raw = pd.read_csv(output, delimiter=sep, skipinitialspace=True, 
-                         encoding=encoding, dtype=str, keep_default_na=False)
+    if df_raw is None:
+        st.error("❌ No se pudo leer el archivo con ninguna codificación. Verifica el formato.")
+        st.stop()
+    
+    # Mostrar la codificación usada (opcional, para depuración)
+    # st.info(f"📄 Codificación usada: {encoding_usado}")
+    
     df_raw.columns = df_raw.columns.str.strip()
     
     # --- MAPEO DE COLUMNAS ---
